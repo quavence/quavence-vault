@@ -1,0 +1,33 @@
+{
+  "name": "quavence-vault-extension",
+  "version": "0.1.0",
+  "description": "Official Non-Custodial Browser Extension for Quavence (QVNC)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build && node -e \"fs.copyFileSync('manifest.json', 'dist/manifest.json')\"",
+    "package": "npm run build && powershell -Command \"Compress-Archive -Path dist/* -DestinationPath quavence-vault-extension-v0.1.0.zip -Force\"",
+    "test:crypto": "tsx src/shared/crypto/__tests__/crypto.test.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "@noble/secp256k1": "^2.2.3",
+    "@scure/bip32": "^1.6.2",
+    "@scure/bip39": "^1.5.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-qr-code": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.307",
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.14"
+  }
+}
