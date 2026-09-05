@@ -6,6 +6,8 @@ node_modules/
 # Production build artifacts
 dist/
 *.zip
+!quavence-vault-extension-*.zip
+!*.sha256
 
 # Environment variables & secrets
 .env
