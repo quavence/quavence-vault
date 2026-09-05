@@ -650,26 +650,31 @@ export function App() {
     }
   };
 
-  const fetchBalance = async (addr: string) => {
+  const fetchBalance = async (addr: string, isManualRefresh = false) => {
     if (!addr) return;
     setBalanceLoading(true);
     const balanceKey = `balance_${addr}`;
     const txsKey = `txs_${addr}`;
 
-    // 1. Immediately restore cached balance and transactions from local storage (0ms render)
-    try {
-      const cached = await chrome.storage.local.get([balanceKey, txsKey]);
-      if (cached?.[balanceKey]) {
-        setBalance(cached[balanceKey]);
-      }
-      if (Array.isArray(cached?.[txsKey]) && cached[txsKey].length > 0) {
-        setTransactions(cached[txsKey]);
-      }
-    } catch {}
+    // 1. Immediately restore cached balance on initial mount only
+    if (!isManualRefresh) {
+      try {
+        const cached = await chrome.storage.local.get([balanceKey, txsKey]);
+        if (cached?.[balanceKey]) {
+          setBalance(cached[balanceKey]);
+        }
+        if (Array.isArray(cached?.[txsKey]) && cached[txsKey].length > 0) {
+          setTransactions(cached[txsKey]);
+        }
+      } catch {}
+    }
 
-    // 2. Fetch fresh balance and transactions from Explorer in background
+    // 2. Fetch fresh balance and transactions from Explorer (bypassing browser cache)
     try {
-      const res = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${addr}`);
+      const res = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${addr}?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      });
       if (res.ok) {
         const json = await res.json();
         let raw = Number(json.balance || 0);
@@ -1840,6 +1845,8 @@ export function App() {
             height: isSidePanel ? 'calc(100vh - 48px)' : 'calc(600px - 48px)',
             overflow: 'hidden',
             background: '#ffffff',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
           {/* Top Section: Balance, Buttons, and Tabs (Fixed, Zero Layout Shift) */}
@@ -1877,11 +1884,22 @@ export function App() {
               </span>
               <button
                 type="button"
-                onClick={() => address && fetchBalance(address)}
-                style={{ background: 'none', border: 'none', color: '#9CA3AF', cursor: 'pointer', display: 'flex', padding: 0 }}
-                title="Refresh"
+                disabled={balanceLoading}
+                onClick={() => address && fetchBalance(address, true)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: balanceLoading ? '#2563EB' : '#9CA3AF',
+                  cursor: balanceLoading ? 'wait' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 2,
+                  transition: 'color 0.2s',
+                }}
+                title={balanceLoading ? 'Fetching latest on-chain data…' : 'Refresh balance and activity'}
               >
-                <RefreshCw size={14} />
+                <RefreshCw size={14} className={balanceLoading ? 'spin' : ''} />
               </button>
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
