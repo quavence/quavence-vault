@@ -3,7 +3,7 @@ import { EncryptedVault, encryptMnemonic, decryptMnemonic } from './vault';
 import { mnemonicToSeed } from '../shared/crypto/mnemonic';
 import { deriveAccountFromSeed, HDAccount } from '../shared/crypto/derivation';
 import { signMessage } from '../shared/crypto/signing';
-import { buildAndSignTransaction, buildAndSignGlyphTx, UTXO, GlyphMeta } from '../shared/crypto/txBuilder';
+import { buildAndSignTransaction, buildAndSignGlyphTx, UTXO, TxOutput, GlyphMeta } from '../shared/crypto/txBuilder';
 
 const STORAGE_KEYS = {
   VAULT: 'quavence_vault',
@@ -149,9 +149,11 @@ export class KeyringController {
    */
   async signTransaction(params: {
     utxos: UTXO[];
-    toAddress: string;
-    amountSat: number;
+    toAddress?: string;
+    amountSat?: number;
+    outputs?: TxOutput[];
     feeSat?: number;
+    excludeUtxos?: Array<{ txid: string; vout_index?: number }>;
   }): Promise<{ rawHex: string; txid: string; feeSat: number }> {
     const unlocked = await this.isUnlocked();
     if (!unlocked || !this.activeAccount) {
@@ -163,8 +165,10 @@ export class KeyringController {
       fromAddress: this.activeAccount.address,
       toAddress: params.toAddress,
       amountSat: params.amountSat,
+      outputs: params.outputs,
       feeSat: params.feeSat,
       privKey: this.activeAccount.privKey,
+      excludeUtxos: params.excludeUtxos,
     });
   }
 

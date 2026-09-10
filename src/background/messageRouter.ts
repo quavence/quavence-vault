@@ -1,5 +1,6 @@
 import { KeyringController } from './keyring';
 import { approvalController } from './approvalController';
+import { NETWORK } from '../shared/constants';
 
 export const keyring = new KeyringController();
 
@@ -50,8 +51,8 @@ export async function handleExtensionMessage(
       }
 
       case 'VAULT_SIGN_TRANSACTION': {
-        const { utxos, toAddress, amountSat, feeSat } = message.payload;
-        const res = await keyring.signTransaction({ utxos, toAddress, amountSat, feeSat });
+        const { utxos, toAddress, amountSat, feeSat, excludeUtxos } = message.payload;
+        const res = await keyring.signTransaction({ utxos, toAddress, amountSat, feeSat, excludeUtxos });
         return { ok: true, data: res };
       }
 
@@ -194,6 +195,198 @@ export async function handleExtensionMessage(
             txid: glyphTx.txid,
             feeSat: glyphTx.feeSat,
             opReturnHex: glyphTx.opReturnHex,
+          },
+        };
+      }
+
+      case 'DAPP_TRANSFER_GLYPH_L1': {
+        const isUnlocked = await keyring.isUnlocked();
+        if (!isUnlocked) {
+          return { ok: false, error: 'Wallet is locked. Please unlock Quavence Vault.' };
+        }
+
+        const { toAddress, glyphHash, edition, slotId, feeSat, dustSat, carrierTxid } = message.payload || {};
+        if (!toAddress) {
+          return { ok: false, error: 'toAddress is required for L1 glyph deposit.' };
+        }
+
+        const address = await keyring.getActiveAddress();
+
+        // 1. Prompt user approval in popup UI
+        await approvalController.requestApproval(
+          'DAPP_TRANSFER_GLYPH_L1',
+          {
+            ...message.payload,
+            activeAddress: address,
+          },
+          origin
+        );
+
+        // 2. Fetch spendable UTXOs for active address from network if not supplied
+        let utxos = message.payload?.utxos;
+        if (!Array.isArray(utxos) || utxos.length === 0) {
+          try {
+            const utxoRes = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${encodeURIComponent(address)}`);
+            if (utxoRes.ok) {
+              const addrData = await utxoRes.json();
+              if (Array.isArray(addrData.utxos) && addrData.utxos.length > 0) {
+                utxos = addrData.utxos;
+              }
+            }
+          } catch {}
+        }
+
+        if (!Array.isArray(utxos) || utxos.length === 0) {
+          throw new Error('No spendable UTXOs found for this address to cover carrier dust and miner fee.');
+        }
+
+        // 3. Sign L1 Glyph Transfer transaction (opType 0x03)
+        const glyphTx = await keyring.signGlyphTransaction({
+          utxos,
+          toAddress,
+          glyphMeta: {
+            glyphId: glyphHash || String(slotId || '0'),
+            edition: Number(edition || slotId || 0),
+            opType: 0x03, // TRANSFER
+            carrierTxid,
+          },
+          feeSat: feeSat || 10000,
+          dustSat: dustSat || 10000,
+        });
+
+        // 4. Broadcast on-chain to Quavence L1 node
+        const bRes = await fetch(`${NETWORK.DEFAULT_DAO_URL}/api/glyphs/broadcast`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rawHex: glyphTx.rawHex,
+            slotId: slotId || edition,
+            glyphHash,
+            fromAddress: address,
+            toAddress,
+            txid: glyphTx.txid,
+            opReturnHex: glyphTx.opReturnHex,
+          }),
+        });
+        const bJson = await bRes.json().catch(() => ({}));
+        if (!bRes.ok || !bJson.ok || !bJson.data?.txid) {
+          throw new Error(bJson.error || `Network rejected raw L1 glyph transfer (HTTP ${bRes.status})`);
+        }
+        const finalTxid = bJson.data.txid;
+
+        return {
+          ok: true,
+          data: {
+            address,
+            txid: finalTxid,
+            rawHex: glyphTx.rawHex,
+            opReturnHex: glyphTx.opReturnHex,
+          },
+        };
+      }
+
+      case 'DAPP_BUY_GLYPH_L1': {
+        const isUnlocked = await keyring.isUnlocked();
+        if (!isUnlocked) {
+          return { ok: false, error: 'Wallet is locked. Please unlock Quavence Vault.' };
+        }
+
+        const {
+          listingId,
+          edition,
+          sellerAddress,
+          sellerSat,
+          feeRecipientAddress,
+          feeSat,
+          feePercent,
+          priceQvnc,
+          name,
+          rarity,
+        } = message.payload || {};
+
+        if (!sellerAddress || !sellerSat || sellerSat <= 0) {
+          return { ok: false, error: 'Invalid seller output details for glyph purchase.' };
+        }
+
+        const address = await keyring.getActiveAddress();
+
+        // 1. Prompt user approval in popup UI
+        await approvalController.requestApproval(
+          'DAPP_BUY_GLYPH_L1',
+          {
+            ...message.payload,
+            activeAddress: address,
+          },
+          origin
+        );
+
+        // 2. Fetch spendable UTXOs for active address
+        let utxos = message.payload?.utxos;
+        const carrierExcludeList: Array<{ txid: string; vout_index: number }> = [];
+
+        if (!Array.isArray(utxos) || utxos.length === 0) {
+          try {
+            const utxoRes = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${encodeURIComponent(address)}`);
+            if (utxoRes.ok) {
+              const addrData = await utxoRes.json();
+              if (Array.isArray(addrData.glyphs)) {
+                addrData.glyphs.forEach((g: any) => {
+                  if (g.txid) {
+                    carrierExcludeList.push({ txid: g.txid, vout_index: g.carrierVout ?? 0 });
+                  }
+                });
+              }
+              if (Array.isArray(addrData.utxos) && addrData.utxos.length > 0) {
+                utxos = addrData.utxos;
+              }
+            }
+          } catch {}
+        }
+
+        if (!Array.isArray(utxos) || utxos.length === 0) {
+          throw new Error('No spendable UTXOs found for this address to cover purchase payment and miner fee.');
+        }
+
+        // 3. Build multi-output payment: seller + fee recipient (if fee > 0)
+        const outputs: { address: string; amountSat: number }[] = [
+          { address: sellerAddress, amountSat: Math.round(sellerSat) },
+        ];
+
+        if (feeRecipientAddress && feeSat && feeSat > 0) {
+          outputs.push({ address: feeRecipientAddress, amountSat: Math.round(feeSat) });
+        }
+
+        // 4. Sign native payment transaction with carrier protection
+        const payTx = await keyring.signTransaction({
+          utxos,
+          outputs,
+          feeSat: 10000,
+          excludeUtxos: carrierExcludeList,
+        });
+
+        // 5. Broadcast transaction on-chain
+        const bRes = await fetch(`${NETWORK.DEFAULT_DAO_URL}/api/glyphs/broadcast`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rawHex: payTx.rawHex,
+            fromAddress: address,
+            toAddress: sellerAddress,
+            txid: payTx.txid,
+          }),
+        });
+        const bJson = await bRes.json().catch(() => ({}));
+        if (!bRes.ok || !bJson.ok || !bJson.data?.txid) {
+          throw new Error(bJson.error || `Network rejected raw L1 glyph purchase transaction (HTTP ${bRes.status})`);
+        }
+        const finalTxid = bJson.data.txid;
+
+        return {
+          ok: true,
+          data: {
+            address,
+            txid: finalTxid,
+            rawHex: payTx.rawHex,
           },
         };
       }

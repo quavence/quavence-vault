@@ -11,7 +11,8 @@ Built with modern Manifest V3, React 18, Vite, and auditable cryptographic primi
 - **Sovereign Key Storage**: Seed phrases and private keys never leave the client device.
 - **Hardware-Grade Encryption**: Encrypted locally using **AES-GCM-256** with **PBKDF2** (210,000 SHA-256 iterations) conforming to modern OWASP guidelines.
 - **Session Auto-Lock**: Keys in active memory are managed strictly via isolated `chrome.storage.session` and automatically purged after 15 minutes of inactivity.
-- **Approval Flow**: dApps cannot silently request signatures or claims. Every interactive call (`window.quavence.signMessage`, `window.quavence.claimGlyph`) triggers an explicit user approval prompt with origin verification.
+- **Approval Flow**: dApps cannot silently request signatures or claims. Every interactive call (`window.quavence.signMessage`, `window.quavence.claimGlyph`, `window.quavence.transferGlyph`, `window.quavence.buyGlyph`) triggers an explicit user approval prompt with origin verification.
+- **PoUS AI Glyph Carrier UTXO Immunity**: Carrier UTXOs (0.0001 QVNC / 10,000 satoshis dust carrying on-chain NFT inscriptions) are strictly shielded and excluded from coin selection during standard coin transfers and fee payments, preventing accidental burning or loss of digital artifacts.
 - **BIP Standards Compliance**:
   - **BIP-39**: 12/24-word deterministic mnemonic phrases.
   - **BIP-32 / BIP-44**: Derivation path `m/44'/9999'/0'/0/index`.
@@ -31,10 +32,15 @@ Built with modern Manifest V3, React 18, Vite, and auditable cryptographic primi
 npm install
 ```
 
-### 2. Verify Cryptographic Engine
-Run the automated cryptographic self-test verifying key derivation, WIF import/export, and BlackCoin-compatible message signing:
+### 2. Verify Cryptographic Engine & Transaction Builder
+Run the automated test suite verifying BIP-39 mnemonic derivation, WIF import/export, BlackCoin-compatible message signing, and Carrier UTXO immunity:
 ```bash
-npm run test:crypto
+npm test
+```
+Or run individual suites:
+```bash
+npm run test:crypto    # BIP-39, BIP-44, WIF, and Secp256k1 signature verification
+npm run test:tx        # Native P2PKH txBuilder & Carrier UTXO immunity verification
 ```
 
 ### 3. Build Extension Bundle
@@ -43,6 +49,12 @@ npm run build
 ```
 Production assets are generated in the `./dist` folder.
 
+### 4. Create Distributable Zip Package
+```bash
+npm run package
+```
+Generates `quavence-vault-extension-v0.1.0.zip` ready for Chromium distribution.
+
 ---
 
 ## Installation in Chrome / Brave / Edge
@@ -50,7 +62,7 @@ Production assets are generated in the `./dist` folder.
 1. Open your Chromium browser and navigate to `chrome://extensions`.
 2. Enable **Developer mode** toggle in the top-right corner.
 3. Click **Load unpacked**.
-4. Select the `quavence-vault-extension/dist` directory.
+4. Select the `quavence-vault-extension/dist` directory (or extract the `.zip` package).
 5. The **Quavence Vault** icon will appear in your browser toolbar.
 
 ---
@@ -62,20 +74,41 @@ When injected into web pages, the extension exposes a standard non-custodial pro
 ```typescript
 // Check if Quavence Vault is installed
 if (window.quavence) {
-  // Request active address
+  // 1. Request active address
   const [address] = await window.quavence.requestAccounts();
   console.log('Connected address:', address);
 
-  // Sign verification message (Requires user approval popup)
+  // 2. Sign verification message (Requires user approval popup)
   const { signature } = await window.quavence.signMessage('Verify ownership of ' + address);
   console.log('Cryptographic signature:', signature);
 
-  // Claim PoUS Glyph artifact
-  const result = await window.quavence.claimGlyph({
+  // 3. Claim PoUS Glyph artifact
+  const claimResult = await window.quavence.claimGlyph({
     dropId: 20,
     slotId: 3,
   });
-  console.log('Claim Attestation:', result);
+  console.log('Claim Attestation:', claimResult);
+
+  // 4. Transfer PoUS Glyph on L1 with carrier preservation
+  const transferResult = await window.quavence.transferGlyph({
+    toAddress: 'SN6UdkEgxgXPv9ueZzEeVZ45XT44rxCbqY',
+    glyphHash: 'd7a8fbb...',
+    edition: 3,
+    carrierTxid: 'a1b2c3...',
+  });
+  console.log('Transfer TxID:', transferResult.txid);
+
+  // 5. Buy PoUS Glyph on L1 Marketplace
+  const buyResult = await window.quavence.buyGlyph({
+    listingId: 42,
+    edition: 3,
+    priceQvnc: 15.5,
+    sellerAddress: 'Sh5hhLFgHroRCLTb9AHnDPMvpMVoLsQQw1',
+    sellerSat: 1550000000,
+    feeRecipientAddress: 'SWiB7o1ENxMQz2jWzgVBQcfxXNJpyFEKL8',
+    feeSat: 38750000,
+  });
+  console.log('Purchase TxID:', buyResult.txid);
 }
 ```
 

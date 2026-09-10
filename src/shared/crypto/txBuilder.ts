@@ -8,6 +8,8 @@ export interface UTXO {
   vout_index: number;
   amount: number; // in satoshis
   block_height?: number;
+  isCarrier?: boolean; // Protected PoUS AI Glyph carrier UTXO (locked from standard coin selection)
+  glyphEdition?: number;
 }
 
 export interface TxOutput {
@@ -18,10 +20,12 @@ export interface TxOutput {
 export interface BuildTxParams {
   utxos: UTXO[];
   fromAddress: string;
-  toAddress: string;
-  amountSat: number;
+  toAddress?: string;
+  amountSat?: number;
+  outputs?: TxOutput[];
   feeSat?: number;
   privKey: Uint8Array;
+  excludeUtxos?: Array<{ txid: string; vout_index?: number }>; // Explicit exclusion of carrier / reserved UTXOs
 }
 
 export const GLYPH_DUST_SAT = 10_000; // 0.0001 QVNC — minimal UTXO carrying the glyph
@@ -40,6 +44,8 @@ export interface GlyphMeta {
   glyphId: string; // hex string, 32 bytes = SHA256 of svg_content / glyph_hash
   edition: number; // uint16
   opType: GlyphOpType;
+  carrierTxid?: string;
+  carrierVout?: number;
 }
 
 export interface BuildGlyphTxParams {
@@ -83,6 +89,9 @@ function bytesToHex(bytes: Uint8Array): string {
     .join('');
 }
 
+/**
+ * Reverse bytes in-place or return a new reversed copy
+ */
 function reverseBytes(bytes: Uint8Array): Uint8Array {
   const rev = new Uint8Array(bytes.length);
   for (let i = 0; i < bytes.length; i++) {
@@ -92,18 +101,20 @@ function reverseBytes(bytes: Uint8Array): Uint8Array {
 }
 
 /**
- * Generate standard P2PKH scriptPubKey:
- * OP_DUP (0x76) OP_HASH160 (0xa9) PUSH20 <pubKeyHash> OP_EQUALVERIFY (0x88) OP_CHECKSIG (0xac)
+ * Encode P2PKH scriptPubKey from Base58 Quavence Address
  */
-export function addressToScriptPubKey(address: string): Uint8Array {
-  const { hash160 } = decodeAddress(address);
+function addressToScriptPubKey(address: string): Uint8Array {
+  const decoded = decodeAddress(address);
+  const pubKeyHash = decoded.hash160; // 20 bytes
+
+  // OP_DUP (0x76) OP_HASH160 (0xa9) 0x14 <pubKeyHash> OP_EQUALVERIFY (0x88) OP_CHECKSIG (0xac)
   const script = new Uint8Array(25);
-  script[0] = 0x76; // OP_DUP
-  script[1] = 0xa9; // OP_HASH160
-  script[2] = 0x14; // PUSH 20 bytes
-  script.set(hash160, 3);
-  script[23] = 0x88; // OP_EQUALVERIFY
-  script[24] = 0xac; // OP_CHECKSIG
+  script[0] = 0x76;
+  script[1] = 0xa9;
+  script[2] = 0x14; // Push 20 bytes
+  script.set(pubKeyHash, 3);
+  script[23] = 0x88;
+  script[24] = 0xac;
   return script;
 }
 
@@ -188,21 +199,49 @@ function toDerSignature(sig: secp256k1.Signature): Uint8Array {
  * Build and sign a native Quavence P2PKH UTXO transaction purely on client.
  */
 export async function buildAndSignTransaction(params: BuildTxParams): Promise<{ rawHex: string; txid: string; feeSat: number }> {
-  const { utxos, fromAddress, toAddress, amountSat, privKey } = params;
+  const { utxos, fromAddress, privKey } = params;
   const feeSat = params.feeSat ?? DEFAULT_MIN_FEE_SAT;
 
-  if (amountSat <= 0) {
-    throw new Error('Transaction amount must be greater than zero');
+  let targetOutputs: TxOutput[] = [];
+  if (Array.isArray(params.outputs) && params.outputs.length > 0) {
+    targetOutputs = params.outputs.filter((o) => o.amountSat > 0);
+  } else if (params.toAddress && params.amountSat && params.amountSat > 0) {
+    targetOutputs = [{ address: params.toAddress, amountSat: params.amountSat }];
+  } else {
+    throw new Error('Transaction must have at least one recipient output with positive amount');
   }
 
+  const amountSat = targetOutputs.reduce((sum, o) => sum + o.amountSat, 0);
   const targetTotal = amountSat + feeSat;
 
-  // 1. Coin Selection (greedy selection)
+  // 1. Coin Selection with PoUS AI Glyph Carrier Immunity:
+  // Carrier UTXOs (dust of 10,000 sat carrying a Glyph inscription) must NEVER be automatically
+  // selected for standard payments or fee payment, preventing accidental burning or loss of NFTs.
+  const excludeKeys = new Set<string>();
+  if (Array.isArray(params.excludeUtxos)) {
+    params.excludeUtxos.forEach((ex) => {
+      if (typeof ex.vout_index === 'number') {
+        excludeKeys.add(`${ex.txid}:${ex.vout_index}`);
+      } else {
+        excludeKeys.add(ex.txid);
+      }
+    });
+  }
+
   let selectedInputs: UTXO[] = [];
   let accumulatedSat = 0;
+  let skippedCarrierCount = 0;
 
   for (const u of utxos) {
     if (u.amount <= 0) continue;
+
+    // Strict carrier check: explicit exclusion or marked as carrier
+    const isExcluded = excludeKeys.has(`${u.txid}:${u.vout_index}`) || excludeKeys.has(u.txid);
+    if (u.isCarrier || isExcluded) {
+      skippedCarrierCount++;
+      continue;
+    }
+
     selectedInputs.push(u);
     accumulatedSat += u.amount;
     if (accumulatedSat >= targetTotal) {
@@ -211,15 +250,17 @@ export async function buildAndSignTransaction(params: BuildTxParams): Promise<{ 
   }
 
   if (accumulatedSat < targetTotal) {
+    const carrierNote =
+      skippedCarrierCount > 0
+        ? ` (${skippedCarrierCount} carrier UTXO${skippedCarrierCount > 1 ? 's' : ''} locked to protect on-chain PoUS AI Glyphs)`
+        : '';
     throw new Error(
-      `Insufficient spendable UTXOs. Required: ${targetTotal / 1e8} QVNC (including ${feeSat / 1e8} fee), Available: ${accumulatedSat / 1e8} QVNC`
+      `Insufficient spendable UTXOs. Required: ${targetTotal / 1e8} QVNC (including ${feeSat / 1e8} fee), Available: ${accumulatedSat / 1e8} QVNC${carrierNote}`
     );
   }
 
   // 2. Prepare Outputs
-  const outputs: TxOutput[] = [
-    { address: toAddress, amountSat },
-  ];
+  const outputs: TxOutput[] = [...targetOutputs];
 
   const changeSat = accumulatedSat - targetTotal;
   // If change is greater than dust threshold (e.g. 1000 sat), return change to sender
@@ -406,17 +447,30 @@ export async function buildAndSignGlyphTx(params: BuildGlyphTxParams): Promise<{
 
   const targetTotal = dustSat + feeSat;
 
-  // 1. Coin Selection (greedy selection from available UTXOs)
+  // 1. Coin Selection (prioritizing the carrier UTXO if specified)
   let selectedInputs: UTXO[] = [];
   let accumulatedSat = 0;
 
-  for (const u of utxos) {
-    if (u.amount <= 0) continue;
+  const candidateUtxos = [...utxos];
+  if (glyphMeta.carrierTxid) {
+    const carrierIdx = candidateUtxos.findIndex((u) => {
+      const matchTx = u.txid === glyphMeta.carrierTxid;
+      const matchVout = glyphMeta.carrierVout === undefined || u.vout_index === glyphMeta.carrierVout;
+      return matchTx && matchVout;
+    });
+    if (carrierIdx !== -1) {
+      const [carrier] = candidateUtxos.splice(carrierIdx, 1);
+      selectedInputs.push(carrier);
+      accumulatedSat += carrier.amount;
+    }
+  }
+
+  // Gather additional funds for miner fee while strictly preserving any OTHER carrier UTXOs
+  for (const u of candidateUtxos) {
+    if (accumulatedSat >= targetTotal) break;
+    if (u.amount <= 0 || u.isCarrier) continue;
     selectedInputs.push(u);
     accumulatedSat += u.amount;
-    if (accumulatedSat >= targetTotal) {
-      break;
-    }
   }
 
   if (accumulatedSat < targetTotal) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import QRCode from 'react-qr-code';
 import { generateMnemonic, validateMnemonic } from '../shared/crypto/mnemonic';
 import { isValidAddress } from '../shared/crypto/address';
@@ -51,7 +51,11 @@ interface TxItem {
   glyph_hash?: string;
 }
 
-function formatSvgForPreview(rawSvg?: string): string {
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isolateSvgGradients(rawSvg?: string | null, key?: string | number): string {
   if (!rawSvg) return '';
   let svg = rawSvg.trim();
   if (svg.startsWith('data:image/svg+xml')) {
@@ -61,6 +65,72 @@ function formatSvgForPreview(rawSvg?: string): string {
       // keep raw
     }
   }
+
+  // Derive a deterministic or unique prefix
+  let hashStr = '';
+  if (key !== undefined && key !== null && String(key).trim() !== '') {
+    hashStr = String(key).replace(/[^a-zA-Z0-9_-]/g, '_');
+  } else {
+    // Fast string hash of svg contents
+    let h = 5381;
+    for (let i = 0; i < svg.length; i++) {
+      h = ((h << 5) + h) + svg.charCodeAt(i);
+      h |= 0;
+    }
+    hashStr = 's' + Math.abs(h).toString(36);
+  }
+  const prefix = `q_${hashStr}_`;
+
+  // Avoid re-prefixing if already isolated with this prefix
+  if (svg.includes(`id="${prefix}`) || svg.includes(`id='${prefix}`)) {
+    return svg;
+  }
+
+  // 1. Collect all declared IDs and Filter Results in <defs>
+  const idRegex = /\b(id|result)=["']([^"']+)["']/g;
+  const declaredIds = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = idRegex.exec(svg)) !== null) {
+    const id = match[2];
+    if (!['SourceGraphic', 'SourceAlpha', 'BackgroundImage', 'BackgroundAlpha'].includes(id)) {
+      declaredIds.add(id);
+    }
+  }
+
+  if (declaredIds.size === 0) {
+    return svg;
+  }
+
+  // 2. Replace each declared ID and all references to it
+  for (const id of declaredIds) {
+    const newId = `${prefix}${id}`;
+    const defRegex = new RegExp(`\\b(id|result)=(['"])${escapeRegex(id)}\\2`, 'g');
+    svg = svg.replace(defRegex, `$1=$2${newId}$2`);
+
+    const urlRegex = new RegExp(`url\\((['"]?)#${escapeRegex(id)}\\1\\)`, 'g');
+    svg = svg.replace(urlRegex, `url($1#${newId}$1)`);
+
+    const hrefRegex = new RegExp(`(\\b(?:xlink:)?href=['"])#${escapeRegex(id)}(['"])`, 'g');
+    svg = svg.replace(hrefRegex, `$1#${newId}$2`);
+
+    const inRegex = new RegExp(`(\\bin2?=['"])${escapeRegex(id)}(['"])`, 'g');
+    svg = svg.replace(inRegex, `$1${newId}$2`);
+  }
+
+  return svg;
+}
+
+function formatSvgForPreview(rawSvg?: string, key?: string | number): string {
+  if (!rawSvg) return '';
+  let svg = rawSvg.trim();
+  if (svg.startsWith('data:image/svg+xml')) {
+    try {
+      svg = decodeURIComponent(svg.replace(/^data:image\/svg\+xml;utf8,/, ''));
+    } catch {
+      // keep raw
+    }
+  }
+  svg = isolateSvgGradients(svg, key);
   if (svg.includes('<svg') && !svg.includes('viewBox')) {
     svg = svg.replace('<svg', '<svg viewBox="0 0 512 512"');
   }
@@ -159,41 +229,43 @@ function generateClientGlyphSvg(
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${primary}" stroke-width="${i % 2 === 0 ? '2' : '1.2'}" opacity="0.8" />`;
   }).join('');
 
+  const pfx = `cg${edNum}_${Math.abs(seedNum) % 10000}_`;
+
   return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
   <defs>
-    <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
+    <radialGradient id="${pfx}bgGrad" cx="50%" cy="50%" r="70%">
       <stop offset="0%" stop-color="#0E172A" />
       <stop offset="60%" stop-color="#020617" />
       <stop offset="100%" stop-color="#000000" />
     </radialGradient>
-    <linearGradient id="neonG" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="${pfx}neonG" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="${primary}" />
       <stop offset="100%" stop-color="${accent}" />
     </linearGradient>
-    <radialGradient id="coreG" cx="50%" cy="50%" r="50%">
+    <radialGradient id="${pfx}coreG" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#FFFFFF" />
       <stop offset="35%" stop-color="${primary}" stop-opacity="0.85" />
       <stop offset="100%" stop-color="transparent" stop-opacity="0" />
     </radialGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="3" result="blur" />
+    <filter id="${pfx}glow">
+      <feGaussianBlur stdDeviation="3" result="${pfx}blur" />
       <feMerge>
-        <feMergeNode in="blur" />
+        <feMergeNode in="${pfx}blur" />
         <feMergeNode in="SourceGraphic" />
       </feMerge>
     </filter>
   </defs>
-  <rect width="512" height="512" rx="28" fill="url(#bgGrad)" />
+  <rect width="512" height="512" rx="28" fill="url(#${pfx}bgGrad)" />
   <rect width="504" height="504" x="4" y="4" rx="26" fill="none" stroke="${primary}" stroke-width="1.2" opacity="0.35" />
   <circle cx="256" cy="256" r="216" fill="none" stroke="${accent}" stroke-width="1" opacity="0.4" stroke-dasharray="4,8" />
   <circle cx="256" cy="256" r="170" fill="none" stroke="${primary}" stroke-width="1.5" opacity="0.6" />
-  <g transform="rotate(${rot} 256 256)" filter="url(#glow)">
+  <g transform="rotate(${rot} 256 256)" filter="url(#${pfx}glow)">
     ${rays}
-    <polygon points="256,120 373,256 256,392 139,256" fill="url(#neonG)" fill-opacity="0.18" stroke="${primary}" stroke-width="2" />
+    <polygon points="256,120 373,256 256,392 139,256" fill="url(#${pfx}neonG)" fill-opacity="0.18" stroke="${primary}" stroke-width="2" />
     <polygon points="256,145 352,256 256,367 160,256" fill="none" stroke="${accent}" stroke-width="1.5" opacity="0.85" />
-    <polygon points="256,170 320,256 256,342 192,256" fill="url(#neonG)" fill-opacity="0.25" stroke="#FFFFFF" stroke-width="1.2" />
+    <polygon points="256,170 320,256 256,342 192,256" fill="url(#${pfx}neonG)" fill-opacity="0.25" stroke="#FFFFFF" stroke-width="1.2" />
   </g>
-  <circle cx="256" cy="256" r="48" fill="url(#coreG)" filter="url(#glow)" />
+  <circle cx="256" cy="256" r="48" fill="url(#${pfx}coreG)" filter="url(#${pfx}glow)" />
   <polygon points="256,236 273,256 256,276 239,256" fill="#FFFFFF" />
   <circle cx="256" cy="256" r="4" fill="${primary}" />
   <text x="256" y="474" text-anchor="middle" fill="${badgeColor}" font-family="monospace, sans-serif" font-size="11" font-weight="700" letter-spacing="2">
@@ -220,12 +292,11 @@ async function resolveGlyphArtifact(
     }
   } catch {}
 
-  // 2. Fetch from DAO API endpoints
+  // 2. Fetch from Explorer or DAO API endpoints
   if (query) {
     const endpoints = [
-      `${NETWORK.DEFAULT_DAO_URL}/api/glyphs/details/${query}`,
-      `http://127.0.0.1:3002/api/glyphs/details/${query}`,
-      `http://localhost:3002/api/glyphs/details/${query}`,
+      `${NETWORK.DEFAULT_EXPLORER_URL}/api/glyphs/${encodeURIComponent(query)}`,
+      `${NETWORK.DEFAULT_DAO_URL}/api/glyphs/details/${encodeURIComponent(query)}`,
     ];
 
     for (const ep of endpoints) {
@@ -233,14 +304,15 @@ async function resolveGlyphArtifact(
         const res = await fetch(ep);
         if (res.ok) {
           const json = await res.json();
-          if (json.ok && json.data) {
+          const item = json.data || json;
+          if (item) {
             const art = {
-              name: json.data.name || name || `PoUS Glyph #${edition || ''}`,
-              theme: json.data.theme || json.data.attributes?.theme,
-              rarity: json.data.rarity || json.data.attributes?.rarity || rarity,
-              svgContent: json.data.contentUri || json.data.svgContent,
-              imageRef: json.data.imageRef,
-              edition: json.data.edition || json.data.attributes?.edition || edition,
+              name: item.name || name || `PoUS Glyph #${edition || ''}`,
+              theme: item.theme || item.attributes?.theme,
+              rarity: item.rarity || item.attributes?.rarity || rarity,
+              svgContent: item.contentUri || item.svgContent,
+              imageRef: item.imageRef,
+              edition: item.edition || item.attributes?.edition || edition,
             };
             if (art.svgContent) {
               try {
@@ -290,6 +362,7 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
     txid: string;
     block_height: number;
     netSat: number;
+    explicitType?: 'sent' | 'received';
     tx_type?: string;
     glyph?: any;
     glyph_edition?: number;
@@ -300,10 +373,14 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
   for (const t of rawTxs) {
     if (!t.txid) continue;
     let sat = Number(t.amount || 0);
-    // If raw amount is already in decimal coin units (< 1e5 non-zero), convert to satoshis
-    if (Math.abs(sat) < 1e5 && sat !== 0) {
+    // If raw amount is a floating point with decimals (e.g. 0.0001), convert from coin units to satoshis.
+    // Integer amounts from explorer (e.g. 10000 satoshis carrier dust) are already in satoshis.
+    if (!Number.isInteger(sat) || String(t.amount).includes('.')) {
       sat = Math.round(sat * 1e8);
     }
+
+    // Preserve explicit type if already determined (e.g. from existing TxItem)
+    const explicitType = (t as any).type === 'sent' || (t as any).type === 'received' ? (t as any).type : null;
 
     const tGlyphHash = t.glyph_hash || t.glyph?.glyphHash || t.glyph?.glyph_hash;
     const tEdition = t.glyph_edition || t.glyph?.edition;
@@ -339,6 +416,7 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
     const existing = map.get(t.txid);
     if (existing) {
       existing.netSat += sat;
+      if (explicitType && !existing.explicitType) existing.explicitType = explicitType;
       if (t.block_height) existing.block_height = Math.max(existing.block_height, t.block_height);
       if (!existing.glyph && glyphObj) existing.glyph = glyphObj;
       if (!existing.glyph_edition && tEdition) existing.glyph_edition = tEdition;
@@ -350,6 +428,7 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
         txid: t.txid,
         block_height: t.block_height || 0,
         netSat: sat,
+        explicitType,
         tx_type: t.tx_type,
         glyph: glyphObj,
         glyph_edition: tEdition,
@@ -361,7 +440,7 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
 
   const result: TxItem[] = [];
   for (const item of map.values()) {
-    const isSent = item.netSat < 0;
+    const isSent = item.explicitType ? item.explicitType === 'sent' : item.netSat < 0;
     const absSat = Math.abs(item.netSat);
     result.push({
       txid: item.txid,
@@ -400,6 +479,7 @@ export function App() {
   const [sendSuccessTxId, setSendSuccessTxId] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.00000000');
   const [balanceLoading, setBalanceLoading] = useState<boolean>(false);
+  const isFetchingRef = useRef<boolean>(false);
   const [transactions, setTransactions] = useState<TxItem[]>([]);
   const [glyphs, setGlyphs] = useState<any[]>([]);
   const [glyphsLoading, setGlyphsLoading] = useState<boolean>(false);
@@ -452,6 +532,33 @@ export function App() {
   useEffect(() => {
     checkInitialState();
   }, []);
+
+  // Periodic background polling for balance, transactions, and glyphs while wallet screen is active
+  useEffect(() => {
+    if (screen !== 'wallet' || !address) return;
+
+    // Refresh every 8 seconds when active (standard crypto wallet refresh rate)
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void fetchBalance(address, { silent: true });
+    }, 8000);
+
+    // Also trigger refresh immediately on window focus / tab visibility return
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        void fetchBalance(address, { silent: true });
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [screen, address]);
 
   // Asynchronously resolve official artist vector artwork for any glyph transaction lacking server SVG
   useEffect(() => {
@@ -589,7 +696,7 @@ export function App() {
         const accRes = await chrome.runtime.sendMessage({ type: 'VAULT_GET_ACCOUNT' });
         if (accRes?.data) {
           setAddress(accRes.data.address);
-          fetchBalance(accRes.data.address);
+          fetchBalance(accRes.data.address, { isInitial: true });
           fetchGlyphs(accRes.data.address);
           setScreen('wallet');
           return;
@@ -607,57 +714,108 @@ export function App() {
     setGlyphsLoading(true);
     try {
       const key = `glyphs_${addr}`;
+      // 1. Immediately restore cached glyphs on mount for instant render (SWR pattern)
       try {
         const stored = await chrome.storage.local.get(key);
-        if (Array.isArray(stored[key]) && stored[key].length > 0) {
+        if (Array.isArray(stored[key])) {
           setGlyphs(stored[key]);
         }
       } catch {}
 
-      const candidateUrls = [
-        `http://127.0.0.1:3002/api/glyphs/by-address/${addr}`,
-        `http://localhost:3002/api/glyphs/by-address/${addr}`,
-        `${NETWORK.DEFAULT_DAO_URL}/api/glyphs/by-address/${addr}`,
-      ];
+      // 2. Query ONLY the official Quavence L1 Explorer for on-chain carrier UTXOs
+      const res = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${encodeURIComponent(addr)}?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+      });
 
-      let remoteList: any[] | null = null;
-      for (const url of candidateUrls) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            const json = await res.json();
-            if (json.ok && Array.isArray(json.data)) {
-              remoteList = json.data;
-              break;
-            }
-          }
-        } catch {
-          // ignore network glitch
-        }
-      }
+      if (res.ok) {
+        const json = await res.json();
+        const rawGlyphs = Array.isArray(json?.glyphs) ? json.glyphs : [];
+        const onChainGlyphs = rawGlyphs.map((g: any) => {
+          const edition = Number(g.edition || g.id || 0);
+          const rarity = g.rarity || 'Common';
+          const theme = g.theme || 'PoUS Consensus Core';
+          const name = g.name || (edition === 7860 ? 'Solar Punk Phoenix #7860' : `PoUS Glyph #${edition}`);
+          return {
+            id: edition,
+            edition,
+            name,
+            theme,
+            rarity,
+            svgContent: g.svgContent || g.contentUri || null,
+            contentUri: g.contentUri || g.svgContent || null,
+            imageRef: g.imageRef || null,
+            glyphHash: g.glyphHash || g.glyph_hash || '',
+            carrierAddress: g.carrierAddress || addr,
+            carrierVout: g.carrierVout ?? 0,
+            carrierDust: g.carrierDust ?? 10000,
+            txid: g.txid || '',
+            blockHeight: g.blockHeight,
+            blockTime: g.blockTime,
+            attributes: {
+              edition,
+              rarity,
+              theme,
+              glyph_hash: g.glyphHash || g.glyph_hash || '',
+            },
+          };
+        });
 
-      if (remoteList && remoteList.length > 0) {
-        setGlyphs(remoteList);
+        // 3. Authoritative SWR sync: Overwrite state and cache with exact on-chain reality
+        setGlyphs(onChainGlyphs);
         try {
-          await chrome.storage.local.set({ [key]: remoteList });
+          await chrome.storage.local.set({ [key]: onChainGlyphs });
         } catch {}
-        setTransactions((prev) => processAddressTransactions(prev, remoteList));
+
+        setTransactions((prev) =>
+          prev.map((tx) => {
+            const match = onChainGlyphs.find(
+              (g: any) =>
+                g.mintTx === tx.txid ||
+                g.txid === tx.txid ||
+                (tx.glyph_edition && (g.edition === tx.glyph_edition || g.attributes?.edition === tx.glyph_edition))
+            );
+            if (!match) return tx;
+            return {
+              ...tx,
+              glyph: tx.glyph || match,
+              glyph_edition: tx.glyph_edition || match.edition || match.attributes?.edition,
+            };
+          })
+        );
       }
     } catch {
-      // keep cached
+      // Keep cached on network failure
     } finally {
       setGlyphsLoading(false);
     }
   };
 
-  const fetchBalance = async (addr: string, isManualRefresh = false) => {
+  const fetchBalance = async (
+    addr: string,
+    optionsOrManual: boolean | { isManualRefresh?: boolean; isInitial?: boolean; silent?: boolean } = false
+  ) => {
     if (!addr) return;
-    setBalanceLoading(true);
+
+    const isManual = typeof optionsOrManual === 'boolean'
+      ? optionsOrManual
+      : !!optionsOrManual?.isManualRefresh;
+    const isInitial = typeof optionsOrManual === 'object' && !!optionsOrManual?.isInitial;
+    const isSilent = typeof optionsOrManual === 'object' && !!optionsOrManual?.silent;
+
+    // Avoid overlapping in-flight network requests unless user clicks manually
+    if (isFetchingRef.current && !isManual) return;
+    isFetchingRef.current = true;
+
+    if (!isSilent) {
+      setBalanceLoading(true);
+    }
     const balanceKey = `balance_${addr}`;
     const txsKey = `txs_${addr}`;
+    const glyphsKey = `glyphs_${addr}`;
 
     // 1. Immediately restore cached balance on initial mount only
-    if (!isManualRefresh) {
+    if (isInitial) {
       try {
         const cached = await chrome.storage.local.get([balanceKey, txsKey]);
         if (cached?.[balanceKey]) {
@@ -669,17 +827,17 @@ export function App() {
       } catch {}
     }
 
-    // 2. Fetch fresh balance and transactions from Explorer (bypassing browser cache)
+    // 2. Fetch fresh balance, transactions, and on-chain glyphs from Explorer
     try {
-      const res = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${addr}?_t=${Date.now()}`, {
+      const res = await fetch(`${NETWORK.DEFAULT_EXPLORER_URL}/api/address/${encodeURIComponent(addr)}?_t=${Date.now()}`, {
         cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
       });
       if (res.ok) {
         const json = await res.json();
         let raw = Number(json.balance || 0);
-        // If balance is in satoshis (integer units from core), divide by 1e8
-        if (Math.abs(raw) >= 1e5) {
+        // Explorer API balance is returned in satoshis (integer units). Divide by 1e8 to get QVNC coins.
+        if (Number.isInteger(raw) && !String(json.balance).includes('.')) {
           raw = raw / 1e8;
         }
         const formatted = raw.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 8 });
@@ -688,8 +846,46 @@ export function App() {
           await chrome.storage.local.set({ [balanceKey]: formatted });
         } catch {}
 
+        // 3. Also sync on-chain glyphs from the exact same Explorer query
+        let latestGlyphs = glyphs;
+        if (Array.isArray(json.glyphs)) {
+          latestGlyphs = json.glyphs.map((g: any) => {
+            const edition = Number(g.edition || g.id || 0);
+            const rarity = g.rarity || 'Common';
+            const theme = g.theme || 'PoUS Consensus Core';
+            const name = g.name || (edition === 7860 ? 'Solar Punk Phoenix #7860' : `PoUS Glyph #${edition}`);
+            return {
+              id: edition,
+              edition,
+              name,
+              theme,
+              rarity,
+              svgContent: g.svgContent || g.contentUri || null,
+              contentUri: g.contentUri || g.svgContent || null,
+              imageRef: g.imageRef || null,
+              glyphHash: g.glyphHash || g.glyph_hash || '',
+              carrierAddress: g.carrierAddress || addr,
+              carrierVout: g.carrierVout ?? 0,
+              carrierDust: g.carrierDust ?? 10000,
+              txid: g.txid || '',
+              blockHeight: g.blockHeight,
+              blockTime: g.blockTime,
+              attributes: {
+                edition,
+                rarity,
+                theme,
+                glyph_hash: g.glyphHash || g.glyph_hash || '',
+              },
+            };
+          });
+          setGlyphs(latestGlyphs);
+          try {
+            await chrome.storage.local.set({ [glyphsKey]: latestGlyphs });
+          } catch {}
+        }
+
         if (Array.isArray(json.transactions)) {
-          const processed = processAddressTransactions(json.transactions, glyphs);
+          const processed = processAddressTransactions(json.transactions, latestGlyphs);
           setTransactions(processed);
           try {
             await chrome.storage.local.set({ [txsKey]: processed });
@@ -699,7 +895,10 @@ export function App() {
     } catch {
       // ignore network errors in balance fetch
     } finally {
-      setBalanceLoading(false);
+      isFetchingRef.current = false;
+      if (!isSilent || isManual) {
+        setBalanceLoading(false);
+      }
     }
   };
 
@@ -802,9 +1001,22 @@ export function App() {
         type: 'APPROVAL_RESOLVE',
         payload: { id: pendingApproval.id, result: true },
       });
-      window.close();
-    } catch {
+    } catch (err) {
+      console.warn('[handleApprove] message error:', err);
+    } finally {
+      try {
+        await chrome.storage.session?.remove?.('current_pending_request');
+      } catch {}
+      setPendingApproval(null);
       setBusy(false);
+      if (address) {
+        setScreen('wallet');
+      } else {
+        checkInitialState();
+      }
+      try {
+        window.close();
+      } catch {}
     }
   };
 
@@ -816,9 +1028,22 @@ export function App() {
         type: 'APPROVAL_REJECT',
         payload: { id: pendingApproval.id, reason: 'User rejected request' },
       });
-      window.close();
-    } catch {
+    } catch (err) {
+      console.warn('[handleReject] message error:', err);
+    } finally {
+      try {
+        await chrome.storage.session?.remove?.('current_pending_request');
+      } catch {}
+      setPendingApproval(null);
       setBusy(false);
+      if (address) {
+        setScreen('wallet');
+      } else {
+        checkInitialState();
+      }
+      try {
+        window.close();
+      } catch {}
     }
   };
 
@@ -869,9 +1094,32 @@ export function App() {
         throw new Error('Could not fetch address UTXOs from network.');
       }
       const addrData = await utxoRes.json();
-      const utxos = Array.isArray(addrData.utxos) ? addrData.utxos : [];
+      let rawUtxos: any[] = Array.isArray(addrData.utxos) ? addrData.utxos : [];
 
-      if (utxos.length === 0) {
+      // Carrier UTXO Safety Lock: identify and strictly exclude all outputs that carry PoUS AI Glyphs
+      const heldGlyphsList: any[] = Array.isArray(addrData.glyphs) ? addrData.glyphs : (glyphs || []);
+      const carrierKeys = new Set<string>();
+      const carrierExcludeList: Array<{ txid: string; vout_index: number }> = [];
+
+      heldGlyphsList.forEach((g: any) => {
+        if (g.txid) {
+          const vout = g.carrierVout ?? 0;
+          carrierKeys.add(`${g.txid}:${vout}`);
+          carrierExcludeList.push({ txid: g.txid, vout_index: vout });
+        }
+      });
+
+      const utxos = rawUtxos.map((u: any) => ({
+        ...u,
+        isCarrier: Boolean(u.isCarrier || carrierKeys.has(`${u.txid}:${u.vout_index}`) || (u.amount === 10000 && carrierKeys.has(`${u.txid}:0`))),
+      }));
+
+      const spendableUtxos = utxos.filter((u: any) => !u.isCarrier);
+
+      if (spendableUtxos.length === 0) {
+        if (utxos.length > 0) {
+          throw new Error('All unspent coins on this address are locked Carrier UTXOs protecting your on-chain PoUS AI Glyphs. They cannot be spent as regular QVNC.');
+        }
         throw new Error('No confirmed spendable UTXOs found for this address.');
       }
 
@@ -879,7 +1127,8 @@ export function App() {
       const signRes = await chrome.runtime.sendMessage({
         type: 'VAULT_SIGN_TRANSACTION',
         payload: {
-          utxos,
+          utxos: spendableUtxos,
+          excludeUtxos: carrierExcludeList,
           toAddress: dest,
           amountSat,
           feeSat,
@@ -964,7 +1213,21 @@ export function App() {
         throw new Error('Could not fetch address UTXOs from network.');
       }
       const addrData = await utxoRes.json();
-      const utxos = Array.isArray(addrData.utxos) ? addrData.utxos : [];
+      let rawUtxos: any[] = Array.isArray(addrData.utxos) ? addrData.utxos : [];
+
+      // Tag all carrier UTXOs to ensure fee funding never spends another glyph
+      const heldGlyphsList: any[] = Array.isArray(addrData.glyphs) ? addrData.glyphs : (glyphs || []);
+      const carrierKeys = new Set<string>();
+      heldGlyphsList.forEach((g: any) => {
+        if (g.txid) {
+          carrierKeys.add(`${g.txid}:${g.carrierVout ?? 0}`);
+        }
+      });
+
+      const utxos = rawUtxos.map((u: any) => ({
+        ...u,
+        isCarrier: Boolean(u.isCarrier || carrierKeys.has(`${u.txid}:${u.vout_index}`) || (u.amount === 10000 && carrierKeys.has(`${u.txid}:0`))),
+      }));
 
       if (utxos.length === 0) {
         throw new Error('No confirmed spendable UTXOs found for this address.');
@@ -973,6 +1236,8 @@ export function App() {
       // 2. Sign L1 Glyph Transaction with OP_RETURN via background worker
       const glyphHash = selectedGlyph.attributes?.glyph_hash || selectedGlyph.glyphHash || String(selectedGlyph.id);
       const edition = Number(selectedGlyph.attributes?.edition || selectedGlyph.edition || selectedGlyph.id || 0);
+      const carrierTxid = selectedGlyph.txid || selectedGlyph.carrierTxid;
+      const carrierVout = selectedGlyph.carrierVout ?? 0;
 
       const signRes = await chrome.runtime.sendMessage({
         type: 'VAULT_SEND_GLYPH_L1',
@@ -983,6 +1248,8 @@ export function App() {
             glyphId: glyphHash,
             edition,
             opType: 0x03, // TRANSFER
+            carrierTxid,
+            carrierVout,
           },
           feeSat: 10000,
           dustSat: 10000,
@@ -1127,20 +1394,39 @@ export function App() {
 
       {/* Screen: Welcome */}
       {screen === 'welcome' && (
-        <main className="content">
-          <div className="hero-container">
-              <img
-                src="./icon-128.png"
-                alt="Quavence Logo"
-                style={{ width: 68, height: 68, borderRadius: '50%', objectFit: 'contain', display: 'block', margin: '0 auto' }}
-              />
-            <h1 className="hero-title">Quavence Vault</h1>
-            <p className="hero-desc">
+        <main
+          className="content welcome-view"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            height: isSidePanel ? 'calc(100vh - 52px)' : 'calc(600px - 52px)',
+            padding: '0 24px',
+          }}
+        >
+          <div className="hero-container" style={{ textAlign: 'center', marginBottom: 28 }}>
+            <img
+              src="./icon-128.png"
+              alt="Quavence Logo"
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
+                objectFit: 'contain',
+                display: 'block',
+                margin: '0 auto 14px',
+                border: '1px solid var(--border-card)',
+              }}
+            />
+            <h1 className="hero-title" style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+              Quavence Vault
+            </h1>
+            <p className="hero-desc" style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45, maxWidth: 280, margin: '0 auto' }}>
               Your sovereign Web3 non-custodial gateway for QVNC consensus and PoUS Glyphs.
             </p>
           </div>
 
-          <div className="btn-group">
+          <div className="btn-group" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <button className="btn btn-primary" onClick={handleStartCreate}>
               Create New Wallet
             </button>
@@ -1153,7 +1439,7 @@ export function App() {
 
       {/* Screen: Create Seed Phrase */}
       {screen === 'create_seed' && (
-        <main className="content">
+        <main className="content onboarding-view">
           <h2 className="page-title">Secret Recovery Phrase</h2>
           <p className="page-subtitle">
             Write down these 12 words in order and store them safely. Never share your secret phrase with anyone.
@@ -1208,7 +1494,7 @@ export function App() {
 
       {/* Screen: Import Seed Phrase */}
       {screen === 'import_seed' && (
-        <main className="content">
+        <main className="content onboarding-view">
           <h2 className="page-title">Import Secret Phrase</h2>
           <p className="page-subtitle">
             Enter your 12 or 24-word recovery phrase separated by spaces.
@@ -1250,7 +1536,7 @@ export function App() {
 
       {/* Screen: Set Password */}
       {screen === 'set_password' && (
-        <main className="content">
+        <main className="content onboarding-view">
           <h2 className="page-title">Set Master Password</h2>
           <p className="page-subtitle">
             Create a strong password to unlock your vault on this device.
@@ -1458,7 +1744,11 @@ export function App() {
               <ShieldCheck size={24} />
             </div>
             <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
-              {pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1'
+              {pendingApproval.type === 'DAPP_BUY_GLYPH_L1'
+                ? 'Buy PoUS Glyph'
+                : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1'
+                ? 'Deposit Glyph to Escrow'
+                : pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1'
                 ? 'Claim PoUS Glyph (L1)'
                 : pendingApproval.type === 'DAPP_CLAIM_GLYPH'
                 ? 'Claim PoUS Glyph'
@@ -1516,17 +1806,22 @@ export function App() {
               </div>
             )}
 
-            {(pendingApproval.type === 'DAPP_CLAIM_GLYPH' || pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1') && (() => {
+            {(pendingApproval.type === 'DAPP_CLAIM_GLYPH' || pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1' || pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' || pendingApproval.type === 'DAPP_BUY_GLYPH_L1') && (() => {
               const payload = pendingApproval.payload || {};
               const svgClean = formatSvgForPreview(
                 payload.svgContent ||
-                (typeof payload.imageRef === 'string' && payload.imageRef.includes('<svg') ? payload.imageRef : undefined)
+                (typeof payload.imageRef === 'string' && payload.imageRef.includes('<svg') ? payload.imageRef : undefined),
+                payload.edition || payload.glyph_hash || payload.txid || 'approval'
               );
               const imgSrc = !svgClean ? resolveImageSource(payload.imageRef, pendingApproval.origin) : null;
               const rarityStyle = getRarityBadgeStyle(payload.rarity);
               const activeAddr = payload.activeAddress || '';
               const shortAddr = activeAddr ? `${activeAddr.slice(0, 8)}...${activeAddr.slice(-6)}` : '';
-              const payloadString = pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1'
+              const payloadString = pendingApproval.type === 'DAPP_BUY_GLYPH_L1'
+                ? `BUY_L1_GLYPH:listing=${payload.listingId}:edition=${payload.edition}:price=${payload.priceQvnc}QVNC:seller=${payload.sellerAddress}`
+                : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1'
+                ? `TRANSFER_L1_GLYPH:edition=${payload.edition}:hash=${payload.glyphHash}:to=${payload.toAddress}:price=${payload.priceQvnc || 0}QVNC:dust=0.0001:fee=0.0001`
+                : pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1'
                 ? `L1_GLYPH_OP_RETURN:drop=${payload.dropId}:slot=${payload.slotId}:owner=${activeAddr}:dust=0.0001:fee=0.0001`
                 : `CLAIM_GLYPH:drop=${payload.dropId}:slot=${payload.slotId}:addr=${activeAddr}${payload.sessionUuid ? `:uuid=${payload.sessionUuid}` : ''}`;
 
@@ -1712,28 +2007,90 @@ export function App() {
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: '#64748B' }}>Drop / Slot:</span>
-                      <span style={{ fontWeight: 600, color: '#0F172A' }}>
-                        Drop #{payload.dropId} • Slot #{payload.slotId}
-                      </span>
-                    </div>
+                    {pendingApproval.type === 'DAPP_BUY_GLYPH_L1' ? (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Total Price:</span>
+                          <span style={{ fontWeight: 700, color: '#0284C7' }}>
+                            {payload.priceQvnc} QVNC
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Seller:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+                            {payload.sellerAddress ? `${payload.sellerAddress.slice(0, 8)}...${payload.sellerAddress.slice(-6)}` : ''}
+                          </span>
+                        </div>
+                        {payload.feeSat > 0 && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748B' }}>Marketplace Fee:</span>
+                            <span style={{ fontWeight: 500, color: '#64748B' }}>
+                              {(payload.feeSat / 1e8).toFixed(4)} QVNC
+                            </span>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>L1 Miner Fee:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A' }}>
+                            0.00010000 QVNC
+                          </span>
+                        </div>
+                      </>
+                    ) : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' ? (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Escrow Vault:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+                            {payload.toAddress ? `${payload.toAddress.slice(0, 8)}...${payload.toAddress.slice(-6)}` : 'Market Escrow'}
+                          </span>
+                        </div>
+                        {payload.priceQvnc && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: '#64748B' }}>Listing Price:</span>
+                            <span style={{ fontWeight: 700, color: '#0284C7' }}>
+                              {payload.priceQvnc} QVNC
+                            </span>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Carrier Dust:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A' }}>
+                            0.00010000 QVNC
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>L1 Miner Fee:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A' }}>
+                            0.00010000 QVNC
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Drop / Slot:</span>
+                          <span style={{ fontWeight: 600, color: '#0F172A' }}>
+                            Drop #{payload.dropId} • Slot #{payload.slotId}
+                          </span>
+                        </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: '#64748B' }}>Protocol:</span>
-                      <span style={{ color: '#059669', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <ShieldCheck size={12} />
-                        {pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1' ? 'Native L1 UTXO (OP_RETURN)' : 'PoUS On-Chain (Gasless)'}
-                      </span>
-                    </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748B' }}>Protocol:</span>
+                          <span style={{ color: '#059669', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <ShieldCheck size={12} />
+                            {pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1' ? 'Native L1 UTXO (OP_RETURN)' : 'PoUS On-Chain (Gasless)'}
+                          </span>
+                        </div>
 
-                    {pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1' && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 2, borderTop: '1px dashed #E2E8F0' }}>
-                        <span style={{ color: '#64748B' }}>L1 Miner Fee:</span>
-                        <span style={{ fontWeight: 600, color: '#0F172A' }}>
-                          0.0001 QVNC
-                        </span>
-                      </div>
+                        {pendingApproval.type === 'DAPP_CLAIM_GLYPH_L1' && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 2, borderTop: '1px dashed #E2E8F0' }}>
+                            <span style={{ color: '#64748B' }}>L1 Miner Fee:</span>
+                            <span style={{ fontWeight: 600, color: '#0F172A' }}>
+                              0.0001 QVNC
+                            </span>
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {payload.coinReward && (
@@ -1830,7 +2187,9 @@ export function App() {
               disabled={busy}
               style={{ flex: 1, height: 40, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
             >
-              {busy ? 'Signing…' : 'Approve & Sign'}
+              {busy
+                ? (pendingApproval.type === 'DAPP_BUY_GLYPH_L1' ? 'Buying…' : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' ? 'Depositing…' : 'Signing…')
+                : (pendingApproval.type === 'DAPP_BUY_GLYPH_L1' ? 'Confirm Purchase' : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' ? 'Confirm Escrow Deposit' : 'Approve & Sign')}
             </button>
           </div>
         </main>
@@ -2063,7 +2422,7 @@ export function App() {
                   const rarityStyle = getRarityBadgeStyle(glyphRarity);
                   const rawSvg = tx.glyph?.svgContent ||
                     (typeof tx.glyph?.imageRef === 'string' && tx.glyph.imageRef.includes('<svg') ? tx.glyph.imageRef : undefined);
-                  const glyphSvgClean = formatSvgForPreview(rawSvg);
+                  const glyphSvgClean = formatSvgForPreview(rawSvg, tx.glyph_hash || tx.txid || tx.glyph_edition);
                   const glyphImgSrc = !glyphSvgClean ? resolveImageSource(tx.glyph?.imageRef, NETWORK.DEFAULT_DAO_URL) : null;
 
                   return (
@@ -2121,7 +2480,10 @@ export function App() {
                               <div
                                 style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                 dangerouslySetInnerHTML={{
-                                  __html: formatSvgForPreview(generateClientGlyphSvg(tx.glyph_hash || tx.txid, tx.glyph_edition, glyphRarity, glyphName))
+                                  __html: formatSvgForPreview(
+                                    generateClientGlyphSvg(tx.glyph_hash || tx.txid, tx.glyph_edition, glyphRarity, glyphName),
+                                    tx.glyph_hash || tx.txid || tx.glyph_edition
+                                  )
                                 }}
                               />
                             )
@@ -2172,8 +2534,8 @@ export function App() {
                           <span style={{ fontSize: 10.5, color: '#64748B', fontWeight: 500 }}>QVNC</span>
                         </div>
                         {isGlyph && (
-                          <div style={{ fontSize: 9.5, color: '#059669', fontWeight: 600 }}>
-                            PoUS On-Chain
+                          <div style={{ fontSize: 9.5, color: tx.block_height && tx.block_height > 0 ? '#059669' : '#D97706', fontWeight: 600 }}>
+                            {tx.block_height && tx.block_height > 0 ? 'PoUS On-Chain' : 'Pending Mempool'}
                           </div>
                         )}
                       </div>
@@ -2286,7 +2648,7 @@ export function App() {
                   {glyphs.map((g) => {
                     const rawSvg = g.contentUri ||
                       (typeof g.imageRef === 'string' && g.imageRef.includes('<svg') ? g.imageRef : undefined);
-                    const svgClean = formatSvgForPreview(rawSvg);
+                    const svgClean = formatSvgForPreview(rawSvg, g.id || g.edition || g.attributes?.glyph_hash);
                     const imgSrc = !svgClean ? resolveImageSource(g.imageRef, NETWORK.DEFAULT_DAO_URL) : null;
                     const rarityStyle = getRarityBadgeStyle(g.attributes?.rarity);
 
@@ -2429,7 +2791,7 @@ export function App() {
                   {glyphs.map((g) => {
                     const rawSvg = g.contentUri ||
                       (typeof g.imageRef === 'string' && g.imageRef.includes('<svg') ? g.imageRef : undefined);
-                    const svgClean = formatSvgForPreview(rawSvg);
+                    const svgClean = formatSvgForPreview(rawSvg, g.id || g.edition || g.attributes?.glyph_hash);
                     const imgSrc = !svgClean ? resolveImageSource(g.imageRef, NETWORK.DEFAULT_DAO_URL) : null;
                     const rarityStyle = getRarityBadgeStyle(g.attributes?.rarity);
 
@@ -2556,7 +2918,7 @@ export function App() {
           {selectedGlyph && (() => {
             const rawSvg = selectedGlyph.contentUri ||
               (typeof selectedGlyph.imageRef === 'string' && selectedGlyph.imageRef.includes('<svg') ? selectedGlyph.imageRef : undefined);
-            const svgClean = formatSvgForPreview(rawSvg);
+            const svgClean = formatSvgForPreview(rawSvg, selectedGlyph.id || selectedGlyph.edition || selectedGlyph.attributes?.glyph_hash);
             const imgSrc = !svgClean ? resolveImageSource(selectedGlyph.imageRef, NETWORK.DEFAULT_DAO_URL) : null;
             const rarityStyle = getRarityBadgeStyle(selectedGlyph.attributes?.rarity);
 
@@ -3204,7 +3566,11 @@ export function App() {
                   {selectedTx.amount.toFixed(4)}{' '}
                   <span style={{ fontSize: 16, color: '#2563EB' }}>QVNC</span>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 600, color: '#059669' }}>Confirmed</span>
+                {selectedTx.block_height && selectedTx.block_height > 0 ? (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#059669' }}>Confirmed</span>
+                ) : (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#D97706' }}>Pending (Unconfirmed)</span>
+                )}
               </div>
 
               <div
@@ -3219,11 +3585,18 @@ export function App() {
                   marginBottom: selectedTx.glyph || selectedTx.tx_type?.includes('glyph') || selectedTx.glyph_edition ? 0 : 'auto',
                 }}
               >
-                {selectedTx.block_height && (
+                {selectedTx.block_height && selectedTx.block_height > 0 ? (
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
                     <span style={{ color: '#9CA3AF' }}>Block Height</span>
                     <span style={{ fontWeight: 600, color: '#111827', fontFamily: 'ui-monospace, monospace' }}>
                       #{selectedTx.block_height}
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: '#9CA3AF' }}>Status</span>
+                    <span style={{ fontWeight: 600, color: '#D97706', fontFamily: 'ui-monospace, monospace' }}>
+                      Mempool (0 conf)
                     </span>
                   </div>
                 )}
@@ -3282,7 +3655,7 @@ export function App() {
                 const rawGlyphSvg = selectedTx.glyph?.svgContent ||
                   (typeof selectedTx.glyph?.imageRef === 'string' && selectedTx.glyph.imageRef.includes('<svg') ? selectedTx.glyph.imageRef : undefined) ||
                   generateClientGlyphSvg(selectedTx.glyph_hash || selectedTx.txid, selectedTx.glyph_edition, selectedTx.glyph?.rarity, selectedTx.glyph?.name);
-                const cleanGlyphSvg = formatSvgForPreview(rawGlyphSvg);
+                const cleanGlyphSvg = formatSvgForPreview(rawGlyphSvg, selectedTx.glyph_hash || selectedTx.txid || selectedTx.glyph_edition);
                 const glyphImg = !cleanGlyphSvg ? resolveImageSource(selectedTx.glyph?.imageRef, NETWORK.DEFAULT_DAO_URL) : null;
                 const rarityStyle = getRarityBadgeStyle(selectedTx.glyph?.rarity);
 

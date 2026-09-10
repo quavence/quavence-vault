@@ -38,6 +38,32 @@ export interface QuavenceProvider {
     rarity?: string;
     theme?: string;
   }): Promise<{ address: string; rawHex: string; txid: string; feeSat: number; opReturnHex: string }>;
+  transferGlyph(payload: {
+    toAddress: string;
+    glyphHash: string;
+    edition: number;
+    slotId?: number;
+    priceQvnc?: number;
+    listingId?: number;
+    carrierTxid?: string;
+    name?: string;
+    imageRef?: string;
+    svgContent?: string;
+    rarity?: string;
+    theme?: string;
+  }): Promise<{ address: string; rawHex: string; txid: string; opReturnHex?: string }>;
+  buyGlyph(payload: {
+    listingId: number;
+    edition: number;
+    priceQvnc: number;
+    sellerAddress: string;
+    sellerSat: number;
+    feeRecipientAddress?: string;
+    feeSat?: number;
+    feePercent?: number;
+    name?: string;
+    rarity?: string;
+  }): Promise<{ address: string; rawHex: string; txid: string }>;
   on(event: string, handler: (...args: any[]) => void): void;
   removeListener(event: string, handler: (...args: any[]) => void): void;
 }
@@ -92,6 +118,38 @@ class QuavenceInpageProvider implements QuavenceProvider {
     theme?: string;
   }): Promise<{ address: string; rawHex: string; txid: string; feeSat: number; opReturnHex: string }> {
     return this.postRequest('DAPP_CLAIM_GLYPH_L1', payload);
+  }
+
+  async transferGlyph(payload: {
+    toAddress: string;
+    glyphHash: string;
+    edition: number;
+    slotId?: number;
+    priceQvnc?: number;
+    listingId?: number;
+    carrierTxid?: string;
+    name?: string;
+    imageRef?: string;
+    svgContent?: string;
+    rarity?: string;
+    theme?: string;
+  }): Promise<{ address: string; rawHex: string; txid: string; opReturnHex?: string }> {
+    return this.postRequest('DAPP_TRANSFER_GLYPH_L1', payload);
+  }
+
+  async buyGlyph(payload: {
+    listingId: number;
+    edition: number;
+    priceQvnc: number;
+    sellerAddress: string;
+    sellerSat: number;
+    feeRecipientAddress?: string;
+    feeSat?: number;
+    feePercent?: number;
+    name?: string;
+    rarity?: string;
+  }): Promise<{ address: string; rawHex: string; txid: string }> {
+    return this.postRequest('DAPP_BUY_GLYPH_L1', payload);
   }
 
   on(event: string, handler: (...args: any[]) => void): void {

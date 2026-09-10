@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "description": "Official Non-Custodial Browser Extension for Quavence (QVNC)",
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && node -e \"fs.copyFileSync('manifest.json', 'dist/manifest.json')\"",
     "package": "npm run build && powershell -Command \"Compress-Archive -Path dist/* -DestinationPath quavence-vault-extension-v0.1.0.zip -Force\"",
-    "test:crypto": "tsx src/shared/crypto/__tests__/crypto.test.ts"
+    "test": "tsx src/shared/crypto/__tests__/crypto.test.ts && tsx src/shared/crypto/__tests__/txBuilder.test.ts",
+    "test:crypto": "tsx src/shared/crypto/__tests__/crypto.test.ts",
+    "test:tx": "tsx src/shared/crypto/__tests__/txBuilder.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.7.1",

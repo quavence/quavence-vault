@@ -4,7 +4,7 @@
 
 export interface PendingRequest {
   id: string;
-  type: 'DAPP_SIGN_MESSAGE' | 'DAPP_CLAIM_GLYPH' | 'DAPP_CLAIM_GLYPH_L1' | 'DAPP_CONNECT';
+  type: 'DAPP_SIGN_MESSAGE' | 'DAPP_CLAIM_GLYPH' | 'DAPP_CLAIM_GLYPH_L1' | 'DAPP_CONNECT' | 'DAPP_TRANSFER_GLYPH_L1' | 'DAPP_BUY_GLYPH_L1';
   origin: string;
   payload: any;
   createdAt: number;
@@ -55,9 +55,9 @@ class ApprovalController {
     if (item) {
       item.resolver.resolve(result);
       this.pending.delete(id);
-      await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
-      this.closeActiveWindow();
     }
+    await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+    this.closeActiveWindow();
   }
 
   async rejectApproval(id: string, reason = 'User rejected the request'): Promise<void> {
@@ -65,9 +65,9 @@ class ApprovalController {
     if (item) {
       item.resolver.reject(new Error(reason));
       this.pending.delete(id);
-      await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
-      this.closeActiveWindow();
     }
+    await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+    this.closeActiveWindow();
   }
 
   getPendingRequest(id: string): PendingRequest | undefined {
