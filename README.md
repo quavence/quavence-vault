@@ -6,6 +6,34 @@ Built with modern Manifest V3, React 18, Vite, and auditable cryptographic primi
 
 ---
 
+## ⚡ Quick Install in Chrome / Brave / Edge / Kiwi (Android)
+
+> [!TIP]
+> **No build or Node.js required!** You can install Quavence Vault in less than 60 seconds.
+
+### Method 1: Ready-to-use ZIP Package (Fastest & Recommended)
+1. Download **[`quavence-vault-extension-v0.1.0.zip`](./quavence-vault-extension-v0.1.0.zip)** (or from [GitHub Releases](https://github.com/quavence/quavence-vault/releases) / [quavence.com](https://quavence.com)).
+2. Extract the `.zip` file into a local folder.
+3. In your browser (Chrome / Brave / Edge / Kiwi), navigate to: `chrome://extensions` (or `brave://extensions`).
+4. Enable the **Developer mode** toggle in the top-right corner.
+5. Click **Load unpacked** and select the **extracted folder** (which contains `manifest.json` and `background.js` directly).
+6. Done! The Quavence Vault icon will appear in your browser extensions bar.
+
+---
+
+### Method 2: From Cloned / Downloaded Repository
+If you downloaded the repository as a ZIP from GitHub (`Code -> Download ZIP`) or cloned it via `git clone`:
+
+> [!WARNING]
+> **DO NOT select the repository root folder!** The repository root contains uncompiled TypeScript development files and will produce `Service worker registration failed. Status code: 3`.
+
+👉 Always select the pre-compiled **`dist/`** folder located inside the repository:
+1. Open `chrome://extensions` -> enable **Developer mode**.
+2. Click **Load unpacked**.
+3. Navigate into the repository and select the **`dist`** directory (`quavence-vault/dist`).
+
+---
+
 ## Security Architecture
 
 - **Sovereign Key Storage**: Seed phrases and private keys never leave the client device.
