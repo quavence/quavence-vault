@@ -15,6 +15,58 @@ const SESSION_KEYS = {
   LAST_ACTIVE: 'quavence_session_last_active',
 } as const;
 
+// In-memory fallback for environments (mobile browsers, older Chromium forks) where chrome.storage.session is unavailable
+const sessionMemoryFallback = new Map<string, any>();
+
+const safeSessionStorage = {
+  async get(keys: string | string[]): Promise<Record<string, any>> {
+    if (typeof chrome !== 'undefined' && chrome.storage?.session?.get) {
+      try {
+        return await chrome.storage.session.get(keys);
+      } catch {
+        // Fallback to in-memory map
+      }
+    }
+    const list = Array.isArray(keys) ? keys : [keys];
+    const result: Record<string, any> = {};
+    for (const k of list) {
+      if (sessionMemoryFallback.has(k)) {
+        result[k] = sessionMemoryFallback.get(k);
+      }
+    }
+    return result;
+  },
+
+  async set(items: Record<string, any>): Promise<void> {
+    if (typeof chrome !== 'undefined' && chrome.storage?.session?.set) {
+      try {
+        await chrome.storage.session.set(items);
+        return;
+      } catch {
+        // Fallback to in-memory map
+      }
+    }
+    for (const [k, v] of Object.entries(items)) {
+      sessionMemoryFallback.set(k, v);
+    }
+  },
+
+  async remove(keys: string | string[]): Promise<void> {
+    if (typeof chrome !== 'undefined' && chrome.storage?.session?.remove) {
+      try {
+        await chrome.storage.session.remove(keys);
+        return;
+      } catch {
+        // Fallback to in-memory map
+      }
+    }
+    const list = Array.isArray(keys) ? keys : [keys];
+    for (const k of list) {
+      sessionMemoryFallback.delete(k);
+    }
+  },
+};
+
 export interface PublicAccountInfo {
   index: number;
   address: string;
@@ -82,7 +134,7 @@ export class KeyringController {
    */
   async lock(): Promise<void> {
     this.activeAccount = null;
-    await chrome.storage.session.remove([SESSION_KEYS.SEED, SESSION_KEYS.LAST_ACTIVE]);
+    await safeSessionStorage.remove([SESSION_KEYS.SEED, SESSION_KEYS.LAST_ACTIVE]);
   }
 
   /**
@@ -94,8 +146,8 @@ export class KeyringController {
       if (!isExpired) return true;
     }
 
-    // Try restoring from chrome.storage.session
-    const sessionData = await chrome.storage.session.get([SESSION_KEYS.SEED, SESSION_KEYS.LAST_ACTIVE]);
+    // Try restoring from safeSessionStorage
+    const sessionData = await safeSessionStorage.get([SESSION_KEYS.SEED, SESSION_KEYS.LAST_ACTIVE]);
     const seedArray = sessionData[SESSION_KEYS.SEED] as number[] | undefined;
     const lastActive = sessionData[SESSION_KEYS.LAST_ACTIVE] as number | undefined;
 
@@ -111,7 +163,7 @@ export class KeyringController {
 
     const seed = new Uint8Array(seedArray);
     this.activeAccount = deriveAccountFromSeed(seed, 0);
-    await chrome.storage.session.set({ [SESSION_KEYS.LAST_ACTIVE]: now });
+    await safeSessionStorage.set({ [SESSION_KEYS.LAST_ACTIVE]: now });
     return true;
   }
 
@@ -214,20 +266,20 @@ export class KeyringController {
    * Store binary seed in RAM-only session storage.
    */
   private async setSessionSeed(seed: Uint8Array): Promise<void> {
-    await chrome.storage.session.set({
+    await safeSessionStorage.set({
       [SESSION_KEYS.SEED]: Array.from(seed),
       [SESSION_KEYS.LAST_ACTIVE]: Date.now(),
     });
   }
 
   private async touchSession(): Promise<void> {
-    await chrome.storage.session.set({
+    await safeSessionStorage.set({
       [SESSION_KEYS.LAST_ACTIVE]: Date.now(),
     });
   }
 
   private async checkSessionExpiry(): Promise<boolean> {
-    const sessionData = await chrome.storage.session.get(SESSION_KEYS.LAST_ACTIVE);
+    const sessionData = await safeSessionStorage.get(SESSION_KEYS.LAST_ACTIVE);
     const lastActive = sessionData[SESSION_KEYS.LAST_ACTIVE] as number | undefined;
     if (!lastActive) return true;
     if (Date.now() - lastActive > VAULT_SECURITY.AUTO_LOCK_TIMEOUT_MS) {
