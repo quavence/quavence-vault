@@ -51,6 +51,8 @@ export interface QuavenceProvider {
     svgContent?: string;
     rarity?: string;
     theme?: string;
+    isTransfer?: boolean;
+    action?: string;
   }): Promise<{ address: string; rawHex: string; txid: string; opReturnHex?: string }>;
   buyGlyph(payload: {
     listingId: number;
@@ -133,6 +135,8 @@ class QuavenceInpageProvider implements QuavenceProvider {
     svgContent?: string;
     rarity?: string;
     theme?: string;
+    isTransfer?: boolean;
+    action?: string;
   }): Promise<{ address: string; rawHex: string; txid: string; opReturnHex?: string }> {
     return this.postRequest('DAPP_TRANSFER_GLYPH_L1', payload);
   }

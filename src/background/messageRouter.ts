@@ -260,8 +260,10 @@ export async function handleExtensionMessage(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             rawHex: glyphTx.rawHex,
-            slotId: slotId || edition,
+            isTransfer: true,
+            action: 'transfer',
             glyphHash,
+            edition,
             fromAddress: address,
             toAddress,
             txid: glyphTx.txid,

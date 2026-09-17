@@ -43,10 +43,13 @@ def main():
         dest_versioned = os.path.join(PUBLIC_DOWNLOADS, ZIP_NAME)
         dest_latest = os.path.join(PUBLIC_DOWNLOADS, 'quavence-vault-latest.zip')
         dest_sha = os.path.join(PUBLIC_DOWNLOADS, f'{ZIP_NAME}.sha256')
+        dest_latest_sha = os.path.join(PUBLIC_DOWNLOADS, 'quavence-vault-latest.zip.sha256')
 
         shutil.copyfile(ZIP_PATH, dest_versioned)
         shutil.copyfile(ZIP_PATH, dest_latest)
         shutil.copyfile(SHA_PATH, dest_sha)
+        with open(dest_latest_sha, 'w') as f:
+            f.write(f'{sha256}  quavence-vault-latest.zip\n')
         print(f'[Package] Synchronized to {PUBLIC_DOWNLOADS}')
 
 if __name__ == '__main__':
