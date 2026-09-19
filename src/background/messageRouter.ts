@@ -25,28 +25,33 @@ const INTERNAL_MESSAGE_TYPES = new Set([
   'APPROVAL_REJECT',
 ]);
 
+let cachedTrustedPages: Set<string> | null = null;
+
 function getTrustedExtensionPages(): Set<string> {
-  const pages = new Set<string>();
-  if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
-    try {
-      pages.add(chrome.runtime.getURL('popup.html'));
-      pages.add(chrome.runtime.getURL('sidepanel.html'));
-    } catch {}
+  if (!cachedTrustedPages) {
+    cachedTrustedPages = new Set<string>();
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
+      try {
+        cachedTrustedPages.add(chrome.runtime.getURL('popup.html'));
+        cachedTrustedPages.add(chrome.runtime.getURL('sidepanel.html'));
+      } catch {}
+    }
   }
-  return pages;
+  return cachedTrustedPages;
 }
 
 export function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
   if (sender.id !== chrome.runtime.id) return false;
   if (sender.tab) return false; // content scripts in browser tabs are not trusted for internal methods
+  if (!sender.url) return false;
 
-  // Check sender.url against known extension UI pages
-  if (sender.url) {
-    const senderBase = sender.url.split('?')[0].split('#')[0];
-    if (senderBase.endsWith('/popup.html') || senderBase.endsWith('/sidepanel.html')) {
-      return true;
-    }
-    return getTrustedExtensionPages().has(senderBase);
+  const senderBase = sender.url.split('?')[0].split('#')[0];
+  const trusted = getTrustedExtensionPages();
+  if (trusted.has(senderBase)) return true;
+
+  // Fallback for dynamic / test environments
+  if (senderBase.endsWith('/popup.html') || senderBase.endsWith('/sidepanel.html')) {
+    return true;
   }
 
   return false;
