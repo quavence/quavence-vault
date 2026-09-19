@@ -1,2 +1,3 @@
+02fb166bdec6fe917f15f36901fd01bd06c8fc35364cf773c6888fa4d9043d46  quavence-vault-latest.zip
+02fb166bdec6fe917f15f36901fd01bd06c8fc35364cf773c6888fa4d9043d46  quavence-vault-extension-v0.1.2.zip
 ee0e30537da28c2af18453f0c940033efd2176262914212c21581e3a42ac8f82  quavence-vault-extension-v0.1.0.zip
-ee0e30537da28c2af18453f0c940033efd2176262914212c21581e3a42ac8f82  quavence-vault-latest.zip

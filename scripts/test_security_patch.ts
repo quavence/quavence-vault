@@ -80,6 +80,62 @@ async function runSecurityTests() {
   assert.strictEqual(internalCheck.data, false, 'No vault initialized yet');
   console.log('  ✅ ALLOWED: Trusted popup URL can invoke VAULT_HAS_VAULT');
 
+  // 2b. Simulate approval popup window created via chrome.windows.create (where Chrome sets sender.tab)
+  const trustedPopupWindowSender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: { id: 102, windowId: 200, url: 'chrome-extension://quavence-extension-mock-id/popup.html?request=req123' },
+    origin: 'chrome-extension://quavence-extension-mock-id',
+    url: 'chrome-extension://quavence-extension-mock-id/popup.html?request=req123',
+  };
+
+  const windowApprovalCheck = await handleExtensionMessage(
+    {
+      type: 'APPROVAL_RESOLVE',
+      payload: { id: 'nonexistent-id', result: true },
+    },
+    trustedPopupWindowSender
+  );
+  assert.strictEqual(windowApprovalCheck.ok, true, 'Approval window with tab must be permitted to invoke APPROVAL_RESOLVE');
+  console.log('  ✅ ALLOWED: Trusted approval window with sender.tab can invoke APPROVAL_RESOLVE');
+
+  const trustedPopupWindowTabOnlySender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: { id: 103, windowId: 201, url: 'chrome-extension://quavence-extension-mock-id/popup.html?request=req456' },
+    origin: 'chrome-extension://quavence-extension-mock-id',
+    url: undefined,
+  };
+
+  const tabOnlyApprovalCheck = await handleExtensionMessage(
+    {
+      type: 'APPROVAL_RESOLVE',
+      payload: { id: 'nonexistent-tab-only-id', result: true },
+    },
+    trustedPopupWindowTabOnlySender
+  );
+  assert.strictEqual(
+    tabOnlyApprovalCheck.ok,
+    true,
+    'Approval window with only sender.tab.url must be permitted to invoke APPROVAL_RESOLVE'
+  );
+  console.log('  ✅ ALLOWED: Trusted approval window with sender.tab.url and no sender.url can invoke APPROVAL_RESOLVE');
+
+  const externalTabOnlySender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: { id: 104, windowId: 202, url: 'https://evil-attacker.com/fake-popup.html' },
+    origin: 'https://evil-attacker.com',
+    url: undefined,
+  };
+
+  const externalTabOnlyCheck = await handleExtensionMessage(
+    {
+      type: 'APPROVAL_RESOLVE',
+      payload: { id: 'evil-tab-only-id', result: true },
+    },
+    externalTabOnlySender
+  );
+  assert.strictEqual(externalTabOnlyCheck.ok, false, 'External tab.url-only sender must be blocked');
+  console.log('  ✅ BLOCKED: External tab.url-only sender cannot invoke APPROVAL_RESOLVE');
+
   const trustedSidepanelSender: any = {
     id: 'quavence-extension-mock-id',
     tab: undefined,

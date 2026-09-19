@@ -22,6 +22,16 @@ class ApprovalController {
   private connectedOrigins = new Set<string>();
   private initializedOrigins = false;
 
+  constructor() {
+    try {
+      chrome.windows?.onRemoved?.addListener((windowId) => {
+        if (this.activeWindowId === windowId) {
+          this.activeWindowId = null;
+        }
+      });
+    } catch {}
+  }
+
   async initConnectedOrigins(): Promise<void> {
     if (this.initializedOrigins) return;
     try {
@@ -52,6 +62,22 @@ class ApprovalController {
       if (!list.includes(origin)) {
         await chrome.storage?.local?.set({ connected_origins: [...list, origin] });
       }
+    } catch {}
+  }
+
+  async getConnectedOrigins(): Promise<string[]> {
+    await this.initConnectedOrigins();
+    return Array.from(this.connectedOrigins);
+  }
+
+  async disconnectOrigin(origin: string): Promise<void> {
+    await this.initConnectedOrigins();
+    this.connectedOrigins.delete(origin);
+    try {
+      const stored = await chrome.storage?.local?.get('connected_origins');
+      const list: string[] = stored?.connected_origins || [];
+      const updated = list.filter((o) => o !== origin);
+      await chrome.storage?.local?.set({ connected_origins: updated });
     } catch {}
   }
 
@@ -88,20 +114,41 @@ class ApprovalController {
     });
   }
 
+  private async clearCurrentPendingRequest(id?: string): Promise<void> {
+    try {
+      if (!chrome.storage?.session) return;
+      if (id) {
+        const session = await chrome.storage.session.get('current_pending_request');
+        if (session?.current_pending_request?.id && session.current_pending_request.id !== id) {
+          // A newer request has already claimed session storage — do not delete it!
+          return;
+        }
+      }
+      await chrome.storage.session.remove('current_pending_request');
+    } catch {}
+  }
+
   async resolveApproval(id: string, result: any): Promise<void> {
     const item = this.pending.get(id);
     if (item) {
       if (Date.now() > item.request.expiresAt) {
         this.pending.delete(id);
         item.resolver.reject(new Error('Approval request expired'));
-        await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+        await this.clearCurrentPendingRequest(id);
         this.closeActiveWindow();
         return;
       }
-      item.resolver.resolve(result);
       this.pending.delete(id);
+
+      // Reset active window ID BEFORE resolving so any chained request (e.g. signMessage right after connect)
+      // will cleanly open its own window rather than targeting a closing window
+      this.closeActiveWindow();
+      await this.clearCurrentPendingRequest(id);
+
+      item.resolver.resolve(result);
+      return;
     }
-    await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+    await this.clearCurrentPendingRequest(id);
     this.closeActiveWindow();
   }
 
@@ -111,7 +158,7 @@ class ApprovalController {
       item.resolver.reject(new Error(reason));
       this.pending.delete(id);
     }
-    await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+    await this.clearCurrentPendingRequest(id);
     this.closeActiveWindow();
   }
 
@@ -124,11 +171,16 @@ class ApprovalController {
 
     if (this.activeWindowId !== null) {
       try {
-        await chrome.windows.update(this.activeWindowId, { focused: true });
-        return;
+        const win = await chrome.windows.get(this.activeWindowId, { populate: true });
+        if (win && win.tabs && win.tabs.length > 0 && win.tabs[0].id) {
+          await chrome.tabs.update(win.tabs[0].id, { url: popupUrl });
+          await chrome.windows.update(this.activeWindowId, { focused: true });
+          return;
+        }
       } catch {
         this.activeWindowId = null;
       }
+      this.activeWindowId = null;
     }
 
     try {

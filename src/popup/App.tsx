@@ -30,6 +30,8 @@ import {
   LayoutGrid,
   List,
   Send,
+  Globe,
+  Trash2,
 } from 'lucide-react';
 
 interface TxItem {
@@ -460,7 +462,7 @@ function processAddressTransactions(rawTxs: any[], knownGlyphs: any[] = []): TxI
 
 type Screen = 'loading' | 'welcome' | 'create_seed' | 'import_seed' | 'set_password' | 'unlock' | 'wallet' | 'approval';
 type Tab = 'wallet' | 'glyphs';
-type ModalType = 'none' | 'send' | 'receive';
+type ModalType = 'none' | 'send' | 'receive' | 'connected_sites';
 
 export function App() {
   const [screen, setScreen] = useState<Screen>('loading');
@@ -478,6 +480,8 @@ export function App() {
   const [sendError, setSendError] = useState<string>('');
   const [sendSuccessTxId, setSendSuccessTxId] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.00000000');
+  const [connectedOrigins, setConnectedOrigins] = useState<string[]>([]);
+  const [loadingOrigins, setLoadingOrigins] = useState<boolean>(false);
   const [balanceLoading, setBalanceLoading] = useState<boolean>(false);
   const isFetchingRef = useRef<boolean>(false);
   const [transactions, setTransactions] = useState<TxItem[]>([]);
@@ -993,57 +997,93 @@ export function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const fetchConnectedOrigins = async () => {
+    setLoadingOrigins(true);
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'VAULT_GET_CONNECTED_ORIGINS' });
+      if (res?.ok && Array.isArray(res.data)) {
+        setConnectedOrigins(res.data);
+      }
+    } catch {} finally {
+      setLoadingOrigins(false);
+    }
+  };
+
+  const handleRevokeOrigin = async (originToRevoke: string) => {
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'VAULT_DISCONNECT_ORIGIN',
+        payload: { origin: originToRevoke },
+      });
+      setConnectedOrigins((prev) => prev.filter((o) => o !== originToRevoke));
+    } catch {}
+  };
+
   const handleApprove = async () => {
     if (!pendingApproval) return;
     setBusy(true);
+    let shouldClose = false;
     try {
-      await chrome.runtime.sendMessage({
+      const res = await chrome.runtime.sendMessage({
         type: 'APPROVAL_RESOLVE',
         payload: { id: pendingApproval.id, result: true },
       });
-    } catch (err) {
-      console.warn('[handleApprove] message error:', err);
-    } finally {
-      try {
-        await chrome.storage.session?.remove?.('current_pending_request');
-      } catch {}
-      setPendingApproval(null);
-      setBusy(false);
-      if (address) {
-        setScreen('wallet');
+      if (res && !res.ok) {
+        console.error('[handleApprove] failed:', res.error);
+        setErrorMsg(res.error || 'Approval failed');
       } else {
-        checkInitialState();
+        shouldClose = true;
       }
-      try {
-        window.close();
-      } catch {}
+    } catch (err: any) {
+      console.warn('[handleApprove] message error:', err);
+      setErrorMsg(err.message || 'Approval error');
+    } finally {
+      setBusy(false);
+      if (shouldClose) {
+        setPendingApproval(null);
+        if (address) {
+          setScreen('wallet');
+        } else {
+          checkInitialState();
+        }
+        try {
+          window.close();
+        } catch {}
+      }
     }
   };
 
   const handleReject = async () => {
     if (!pendingApproval) return;
     setBusy(true);
+    let shouldClose = false;
     try {
-      await chrome.runtime.sendMessage({
+      const res = await chrome.runtime.sendMessage({
         type: 'APPROVAL_REJECT',
         payload: { id: pendingApproval.id, reason: 'User rejected request' },
       });
-    } catch (err) {
-      console.warn('[handleReject] message error:', err);
-    } finally {
-      try {
-        await chrome.storage.session?.remove?.('current_pending_request');
-      } catch {}
-      setPendingApproval(null);
-      setBusy(false);
-      if (address) {
-        setScreen('wallet');
+      if (res && !res.ok) {
+        console.error('[handleReject] message error:', res.error);
+        setErrorMsg(res.error || 'Rejection failed');
       } else {
-        checkInitialState();
+        shouldClose = true;
       }
-      try {
-        window.close();
-      } catch {}
+    } catch (err: any) {
+      console.warn('[handleReject] message error:', err);
+      setErrorMsg(err.message || 'Reject error');
+    } finally {
+      setBusy(false);
+      if (shouldClose) {
+        setPendingApproval(null);
+        if (address) {
+          setScreen('wallet');
+        } else {
+          checkInitialState();
+        }
+        try {
+          window.close();
+        } catch {}
+      }
     }
   };
 
@@ -1380,6 +1420,18 @@ export function App() {
           >
             <Maximize2 size={16} />
           </button>
+          {screen === 'wallet' && (
+            <button
+              onClick={() => {
+                fetchConnectedOrigins();
+                setActiveModal('connected_sites');
+              }}
+              style={{ background: 'none', border: 'none', color: '#9CA3AF', cursor: 'pointer', display: 'flex', padding: 0 }}
+              title="Connected Sites"
+            >
+              <Globe size={16} />
+            </button>
+          )}
           {screen === 'wallet' && (
             <button
               onClick={handleLock}
@@ -2193,6 +2245,12 @@ export function App() {
               );
             })()}
           </div>
+
+          {errorMsg && (
+            <p style={{ color: '#ef4444', fontSize: 12, marginBottom: 12, fontWeight: 500, textAlign: 'center' }}>
+              {errorMsg}
+            </p>
+          )}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 'auto', paddingTop: 14 }}>
             <button
@@ -4119,6 +4177,135 @@ export function App() {
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Modal: Connected Sites */}
+          {activeModal === 'connected_sites' && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: '#ffffff',
+                zIndex: 40,
+                display: 'flex',
+                flexDirection: 'column',
+                padding: 16,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Globe size={18} color="#2563EB" />
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#111827', margin: 0 }}>Connected Sites</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModal('none')}
+                  style={{ background: 'none', border: 'none', color: '#9CA3AF', cursor: 'pointer', display: 'flex', padding: 4 }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: 12, color: '#6B7280', margin: '0 0 14px 0', lineHeight: 1.4 }}>
+                Websites authorized to view your active Quavence address and request transaction signatures.
+              </p>
+
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {loadingOrigins ? (
+                  <div style={{ textAlign: 'center', padding: '32px 0', color: '#9CA3AF', fontSize: 12 }}>
+                    Loading connected sites…
+                  </div>
+                ) : connectedOrigins.length === 0 ? (
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '36px 16px',
+                      background: '#F9FAFB',
+                      border: '1px dashed #E5E7EB',
+                      borderRadius: 10,
+                      color: '#9CA3AF',
+                      fontSize: 12,
+                    }}
+                  >
+                    No sites are currently connected to this wallet.
+                  </div>
+                ) : (
+                  connectedOrigins.map((orig) => (
+                    <div
+                      key={orig}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 12px',
+                        background: '#F9FAFB',
+                        border: '1px solid #E5E7EB',
+                        borderRadius: 8,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, marginRight: 8 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#10B981', flexShrink: 0 }} />
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: '#111827',
+                            fontFamily: 'ui-monospace, monospace',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                          title={orig}
+                        >
+                          {orig}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRevokeOrigin(orig)}
+                        style={{
+                          background: '#FEE2E2',
+                          color: '#DC2626',
+                          border: '1px solid #FECACA',
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          flexShrink: 0,
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setActiveModal('none')}
+                  style={{
+                    width: '100%',
+                    height: 38,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    border: '1.5px solid #D1D5DB',
+                    background: '#ffffff',
+                    color: '#374151',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Done
+                </button>
+              </div>
             </div>
           )}
         </main>

@@ -23,6 +23,8 @@ const INTERNAL_MESSAGE_TYPES = new Set([
   'APPROVAL_GET_PENDING',
   'APPROVAL_RESOLVE',
   'APPROVAL_REJECT',
+  'VAULT_GET_CONNECTED_ORIGINS',
+  'VAULT_DISCONNECT_ORIGIN',
 ]);
 
 let cachedTrustedPages: Set<string> | null = null;
@@ -42,17 +44,39 @@ function getTrustedExtensionPages(): Set<string> {
 
 export function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
   if (sender.id !== chrome.runtime.id) return false;
-  if (sender.tab) return false; // content scripts in browser tabs are not trusted for internal methods
-  if (!sender.url) return false;
+  const senderUrlValue = sender.url || sender.tab?.url || '';
+  if (!senderUrlValue) return false;
 
-  const senderBase = sender.url.split('?')[0].split('#')[0];
+  const senderBase = senderUrlValue.split('?')[0].split('#')[0];
   const trusted = getTrustedExtensionPages();
   if (trusted.has(senderBase)) return true;
 
-  // Fallback for dynamic / test environments
-  if (senderBase.endsWith('/popup.html') || senderBase.endsWith('/sidepanel.html')) {
+  // Verify that the sender is an internal extension page (popup.html or sidepanel.html)
+  // belonging to this extension, even when opened via chrome.windows.create (where sender.tab is populated).
+  // Note: Content scripts in web tabs have sender.url = 'https://...' and can NEVER match this check.
+  const extensionPrefix = typeof chrome !== 'undefined' && chrome?.runtime?.id ? `chrome-extension://${chrome.runtime.id}/` : '';
+  if (
+    extensionPrefix &&
+    senderBase.startsWith(extensionPrefix) &&
+    (senderBase.endsWith('/popup.html') || senderBase.endsWith('/sidepanel.html'))
+  ) {
     return true;
   }
+
+  // Fallback for test / dynamic environments where getURL or protocol matches
+  try {
+    const senderUrl = new URL(senderUrlValue);
+    if (
+      senderUrl.protocol === 'chrome-extension:' &&
+      senderUrl.hostname === chrome.runtime.id &&
+      (senderUrl.pathname === '/popup.html' ||
+        senderUrl.pathname === '/sidepanel.html' ||
+        senderUrl.pathname.endsWith('/popup.html') ||
+        senderUrl.pathname.endsWith('/sidepanel.html'))
+    ) {
+      return true;
+    }
+  } catch {}
 
   return false;
 }
@@ -152,6 +176,19 @@ export async function handleExtensionMessage(
       case 'APPROVAL_REJECT': {
         const { id, reason } = message.payload;
         await approvalController.rejectApproval(id, reason);
+        return { ok: true };
+      }
+
+      case 'VAULT_GET_CONNECTED_ORIGINS': {
+        const origins = await approvalController.getConnectedOrigins();
+        return { ok: true, data: origins };
+      }
+
+      case 'VAULT_DISCONNECT_ORIGIN': {
+        const { origin } = message.payload || {};
+        if (origin) {
+          await approvalController.disconnectOrigin(origin);
+        }
         return { ok: true };
       }
 
