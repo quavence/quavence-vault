@@ -9,12 +9,43 @@ export interface ExtensionMessage {
   payload?: any;
 }
 
+// Internal methods restricted exclusively to Quavence Vault's own extension UI (popup/sidepanel)
+const INTERNAL_MESSAGE_TYPES = new Set([
+  'VAULT_HAS_VAULT',
+  'VAULT_IS_UNLOCKED',
+  'VAULT_CREATE',
+  'VAULT_UNLOCK',
+  'VAULT_LOCK',
+  'VAULT_GET_ACCOUNT',
+  'VAULT_EXPORT_MNEMONIC',
+  'VAULT_SIGN_TRANSACTION',
+  'VAULT_SEND_GLYPH_L1',
+  'APPROVAL_GET_PENDING',
+  'APPROVAL_RESOLVE',
+  'APPROVAL_REJECT',
+]);
+
 export async function handleExtensionMessage(
   message: ExtensionMessage,
   sender: chrome.runtime.MessageSender
 ): Promise<any> {
   try {
     const origin = sender.origin || (sender.url ? new URL(sender.url).origin : 'unknown');
+
+    // Security check: Messages from extension UI (popup/sidepanel) have sender.id === chrome.runtime.id AND sender.tab is undefined.
+    // Inbound messages from content scripts injected into browser tabs ALWAYS have sender.tab defined.
+    const isInternalSender = sender.id === chrome.runtime.id && !sender.tab;
+
+    if (INTERNAL_MESSAGE_TYPES.has(message.type) && !isInternalSender) {
+      console.warn(
+        `[Security Alert] Blocked unauthorized attempt to invoke internal method '${message.type}' from external sender/tab:`,
+        { origin, tabId: sender.tab?.id, url: sender.url }
+      );
+      return {
+        ok: false,
+        error: `Forbidden: '${message.type}' is an internal extension method and cannot be invoked by external web pages.`,
+      };
+    }
 
     switch (message.type) {
       case 'VAULT_HAS_VAULT':

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Quavence Vault",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Official Non-Custodial Web3 Wallet for Quavence (QVNC) PoUS Ecosystem",
   "permissions": ["storage", "activeTab", "windows", "sidePanel"],
   "host_permissions": ["<all_urls>"],

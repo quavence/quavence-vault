@@ -3,9 +3,15 @@ import shutil
 import zipfile
 import hashlib
 
+import json
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST_DIR = os.path.join(BASE_DIR, 'dist')
-ZIP_NAME = 'quavence-vault-extension-v0.1.0.zip'
+
+with open(os.path.join(BASE_DIR, 'package.json'), 'r', encoding='utf-8') as pf:
+    pkg_ver = json.load(pf).get('version', '0.1.1')
+
+ZIP_NAME = f'quavence-vault-extension-v{pkg_ver}.zip'
 ZIP_PATH = os.path.join(BASE_DIR, ZIP_NAME)
 SHA_PATH = f'{ZIP_PATH}.sha256'
 
