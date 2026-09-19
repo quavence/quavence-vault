@@ -1744,7 +1744,9 @@ export function App() {
               <ShieldCheck size={24} />
             </div>
             <h2 style={{ fontSize: 16, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
-              {pendingApproval.type === 'DAPP_BUY_GLYPH_L1'
+              {pendingApproval.type === 'DAPP_CONNECT'
+                ? 'Connection Request'
+                : pendingApproval.type === 'DAPP_BUY_GLYPH_L1'
                 ? 'Buy PoUS Glyph'
                 : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1'
                 ? 'Deposit Glyph to Escrow'
@@ -1785,6 +1787,28 @@ export function App() {
             <span style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Request Details
             </span>
+
+            {pendingApproval.type === 'DAPP_CONNECT' && (
+              <div
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #E5E7EB',
+                  borderRadius: 6,
+                  padding: '10px 12px',
+                  fontSize: 12,
+                  color: '#374151',
+                  lineHeight: 1.5,
+                }}
+              >
+                <p style={{ margin: '0 0 8px 0', fontWeight: 500, color: '#111827' }}>
+                  This site is requesting permission to:
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, color: '#4B5563' }}>
+                  <li>View your active Quavence address</li>
+                  <li>Request transaction approvals</li>
+                </ul>
+              </div>
+            )}
 
             {pendingApproval.type === 'DAPP_SIGN_MESSAGE' && (
               <div

@@ -25,6 +25,33 @@ const INTERNAL_MESSAGE_TYPES = new Set([
   'APPROVAL_REJECT',
 ]);
 
+function getTrustedExtensionPages(): Set<string> {
+  const pages = new Set<string>();
+  if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
+    try {
+      pages.add(chrome.runtime.getURL('popup.html'));
+      pages.add(chrome.runtime.getURL('sidepanel.html'));
+    } catch {}
+  }
+  return pages;
+}
+
+export function isTrustedSender(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id) return false;
+  if (sender.tab) return false; // content scripts in browser tabs are not trusted for internal methods
+
+  // Check sender.url against known extension UI pages
+  if (sender.url) {
+    const senderBase = sender.url.split('?')[0].split('#')[0];
+    if (senderBase.endsWith('/popup.html') || senderBase.endsWith('/sidepanel.html')) {
+      return true;
+    }
+    return getTrustedExtensionPages().has(senderBase);
+  }
+
+  return false;
+}
+
 export async function handleExtensionMessage(
   message: ExtensionMessage,
   sender: chrome.runtime.MessageSender
@@ -32,9 +59,8 @@ export async function handleExtensionMessage(
   try {
     const origin = sender.origin || (sender.url ? new URL(sender.url).origin : 'unknown');
 
-    // Security check: Messages from extension UI (popup/sidepanel) have sender.id === chrome.runtime.id AND sender.tab is undefined.
-    // Inbound messages from content scripts injected into browser tabs ALWAYS have sender.tab defined.
-    const isInternalSender = sender.id === chrome.runtime.id && !sender.tab;
+    // Security check: Only verified internal extension UI pages (popup/sidepanel) may call VAULT_* or APPROVAL_*
+    const isInternalSender = isTrustedSender(sender);
 
     if (INTERNAL_MESSAGE_TYPES.has(message.type) && !isInternalSender) {
       console.warn(
@@ -78,13 +104,19 @@ export async function handleExtensionMessage(
       case 'VAULT_EXPORT_MNEMONIC': {
         const { password } = message.payload;
         const mnemonic = await keyring.exportMnemonic(password);
-        return { ok: true, data: mnemonic };
+        return { ok: true, data: { mnemonic } };
       }
 
       case 'VAULT_SIGN_TRANSACTION': {
-        const { utxos, toAddress, amountSat, feeSat, excludeUtxos } = message.payload;
-        const res = await keyring.signTransaction({ utxos, toAddress, amountSat, feeSat, excludeUtxos });
-        return { ok: true, data: res };
+        const { utxos, excludeUtxos, toAddress, amountSat, feeSat } = message.payload;
+        const signedTx = await keyring.signTransaction({
+          utxos,
+          excludeUtxos,
+          toAddress,
+          amountSat,
+          feeSat,
+        });
+        return { ok: true, data: signedTx };
       }
 
       case 'VAULT_SEND_GLYPH_L1': {
@@ -101,8 +133,8 @@ export async function handleExtensionMessage(
 
       // Internal approval management from popup UI
       case 'APPROVAL_GET_PENDING': {
-        const { id } = message.payload || {};
-        const req = id ? approvalController.getPendingRequest(id) : null;
+        const { id } = message.payload;
+        const req = approvalController.getPendingRequest(id);
         return { ok: true, data: req };
       }
 
@@ -119,10 +151,26 @@ export async function handleExtensionMessage(
       }
 
       // dApp External API
+      case 'DAPP_CONNECT': {
+        const isUnlocked = await keyring.isUnlocked();
+        if (!isUnlocked) {
+          return { ok: false, error: 'Wallet is locked. Please unlock Quavence Vault.' };
+        }
+        if (!(await approvalController.isConnected(origin))) {
+          await approvalController.connectOrigin(origin);
+        }
+        const address = await keyring.getActiveAddress();
+        return { ok: true, data: { address, connected: true } };
+      }
+
       case 'DAPP_REQUEST_ACCOUNTS': {
         const isUnlocked = await keyring.isUnlocked();
         if (!isUnlocked) {
           return { ok: false, error: 'Wallet is locked. Please unlock Quavence Vault.' };
+        }
+        // Require explicit user connect-approval before disclosing address
+        if (!(await approvalController.isConnected(origin))) {
+          await approvalController.connectOrigin(origin);
         }
         const address = await keyring.getActiveAddress();
         return { ok: true, data: [address] };

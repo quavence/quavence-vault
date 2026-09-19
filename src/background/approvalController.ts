@@ -8,6 +8,7 @@ export interface PendingRequest {
   origin: string;
   payload: any;
   createdAt: number;
+  expiresAt: number;
 }
 
 type Resolver = {
@@ -18,6 +19,41 @@ type Resolver = {
 class ApprovalController {
   private pending = new Map<string, { request: PendingRequest; resolver: Resolver }>();
   private activeWindowId: number | null = null;
+  private connectedOrigins = new Set<string>();
+  private initializedOrigins = false;
+
+  async initConnectedOrigins(): Promise<void> {
+    if (this.initializedOrigins) return;
+    try {
+      const stored = await chrome.storage?.local?.get('connected_origins');
+      const list: string[] = stored?.connected_origins || [];
+      this.connectedOrigins = new Set(list);
+      this.initializedOrigins = true;
+    } catch {
+      this.initializedOrigins = true;
+    }
+  }
+
+  async isConnected(origin: string): Promise<boolean> {
+    await this.initConnectedOrigins();
+    return this.connectedOrigins.has(origin);
+  }
+
+  async connectOrigin(origin: string): Promise<void> {
+    await this.initConnectedOrigins();
+    if (this.connectedOrigins.has(origin)) return;
+
+    // Prompt user with popup
+    await this.requestApproval('DAPP_CONNECT', { origin }, origin);
+    this.connectedOrigins.add(origin);
+    try {
+      const stored = await chrome.storage?.local?.get('connected_origins');
+      const list: string[] = stored?.connected_origins || [];
+      if (!list.includes(origin)) {
+        await chrome.storage?.local?.set({ connected_origins: [...list, origin] });
+      }
+    } catch {}
+  }
 
   async requestApproval<T = any>(
     type: PendingRequest['type'],
@@ -28,12 +64,14 @@ class ApprovalController {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).substring(2, 12)}`;
 
+    const now = Date.now();
     const request: PendingRequest = {
       id,
       type,
       origin,
       payload,
-      createdAt: Date.now(),
+      createdAt: now,
+      expiresAt: now + 5 * 60 * 1000, // 5 minutes validity
     };
 
     return new Promise<T>((resolve, reject) => {
@@ -53,6 +91,13 @@ class ApprovalController {
   async resolveApproval(id: string, result: any): Promise<void> {
     const item = this.pending.get(id);
     if (item) {
+      if (Date.now() > item.request.expiresAt) {
+        this.pending.delete(id);
+        item.resolver.reject(new Error('Approval request expired'));
+        await chrome.storage.session?.remove?.('current_pending_request').catch(() => {});
+        this.closeActiveWindow();
+        return;
+      }
       item.resolver.resolve(result);
       this.pending.delete(id);
     }

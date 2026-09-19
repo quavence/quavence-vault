@@ -22,6 +22,7 @@ injectProvider();
 
 // Whitelist of public dApp methods permitted to be forwarded from page context
 const ALLOWED_DAPP_MESSAGE_TYPES = new Set([
+  'DAPP_CONNECT',
   'DAPP_REQUEST_ACCOUNTS',
   'DAPP_SIGN_MESSAGE',
   'DAPP_CLAIM_GLYPH',
@@ -42,14 +43,18 @@ window.addEventListener('message', async (event) => {
 
   const { id, type, payload } = event.data;
 
-  // Security gate: Never forward internal VAULT_* or APPROVAL_* messages from arbitrary web pages
-  if (!ALLOWED_DAPP_MESSAGE_TYPES.has(type)) {
+  // Security gate: Strict type check, null-byte check, and allowlist validation
+  if (
+    typeof type !== 'string' ||
+    type.includes('\x00') ||
+    !ALLOWED_DAPP_MESSAGE_TYPES.has(type)
+  ) {
     window.postMessage(
       {
         target: 'quavence-inpage',
         id,
         ok: false,
-        error: `Unauthorized message type: '${type}'. Only public dApp methods may be called from web pages.`,
+        error: `Unauthorized message type: '${String(type)}'. Only public dApp methods may be called from web pages.`,
       },
       '*'
     );

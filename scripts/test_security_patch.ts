@@ -62,22 +62,69 @@ async function runSecurityTests() {
   assert.strictEqual(maliciousApproval.ok, false, 'External APPROVAL_RESOLVE must be blocked');
   console.log('  ✅ BLOCKED: External tab cannot invoke APPROVAL_RESOLVE');
 
-  // 2. Simulate internal extension UI (popup / sidepanel: no tab, sender.id matches)
-  const internalSender: any = {
+  // 2. Simulate internal extension UI (popup / sidepanel)
+  const trustedPopupSender: any = {
     id: 'quavence-extension-mock-id',
     tab: undefined,
     origin: 'chrome-extension://quavence-extension-mock-id',
+    url: 'chrome-extension://quavence-extension-mock-id/popup.html?foo=1',
   };
 
   const internalCheck = await handleExtensionMessage(
     {
       type: 'VAULT_HAS_VAULT',
     },
-    internalSender
+    trustedPopupSender
   );
-  assert.strictEqual(internalCheck.ok, true, 'Internal VAULT_HAS_VAULT must be permitted');
+  assert.strictEqual(internalCheck.ok, true, 'Internal VAULT_HAS_VAULT must be permitted from popup');
   assert.strictEqual(internalCheck.data, false, 'No vault initialized yet');
-  console.log('  ✅ ALLOWED: Internal UI popup can invoke VAULT_HAS_VAULT');
+  console.log('  ✅ ALLOWED: Trusted popup URL can invoke VAULT_HAS_VAULT');
+
+  const trustedSidepanelSender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: undefined,
+    origin: 'chrome-extension://quavence-extension-mock-id',
+    url: 'chrome-extension://quavence-extension-mock-id/sidepanel.html',
+  };
+  const sidepanelCheck = await handleExtensionMessage(
+    {
+      type: 'VAULT_HAS_VAULT',
+    },
+    trustedSidepanelSender
+  );
+  assert.strictEqual(sidepanelCheck.ok, true, 'Internal VAULT_HAS_VAULT must be permitted from sidepanel');
+  console.log('  ✅ ALLOWED: Trusted sidepanel URL can invoke VAULT_HAS_VAULT');
+
+  // 3. Test untrusted extension URL / undefined URL without popup/sidepanel
+  const untrustedExtSender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: undefined,
+    origin: 'chrome-extension://quavence-extension-mock-id',
+    url: 'chrome-extension://quavence-extension-mock-id/untrusted.html',
+  };
+  const untrustedCheck = await handleExtensionMessage(
+    {
+      type: 'VAULT_SIGN_TRANSACTION',
+      payload: {},
+    },
+    untrustedExtSender
+  );
+  assert.strictEqual(untrustedCheck.ok, false, 'Untrusted extension page must be blocked');
+  console.log('  ✅ BLOCKED: Untrusted internal extension page cannot invoke VAULT_SIGN_TRANSACTION');
+
+  const noUrlSender: any = {
+    id: 'quavence-extension-mock-id',
+    tab: undefined,
+  };
+  const noUrlCheck = await handleExtensionMessage(
+    {
+      type: 'VAULT_SIGN_TRANSACTION',
+      payload: {},
+    },
+    noUrlSender
+  );
+  assert.strictEqual(noUrlCheck.ok, false, 'Sender with no URL must be blocked');
+  console.log('  ✅ BLOCKED: Sender without trusted page URL cannot invoke VAULT_SIGN_TRANSACTION');
 
   console.log('🎉 ALL SECURITY PATCH VERIFICATION TESTS PASSED!');
 }
