@@ -1,6 +1,6 @@
 {
   "name": "quavence-vault-extension",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Official Non-Custodial Browser Extension for Quavence (QVNC)",
   "type": "module",
   "license": "MIT",
