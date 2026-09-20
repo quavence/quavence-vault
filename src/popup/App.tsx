@@ -467,6 +467,7 @@ type ModalType = 'none' | 'send' | 'receive' | 'connected_sites';
 export function App() {
   const [screen, setScreen] = useState<Screen>('loading');
   const [pendingApproval, setPendingApproval] = useState<any>(null);
+  const [approvalCooldown, setApprovalCooldown] = useState<boolean>(true);
   const [showPayloadDetails, setShowPayloadDetails] = useState<boolean>(false);
   const [copiedApprovalAddr, setCopiedApprovalAddr] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<Tab>('wallet');
@@ -642,6 +643,19 @@ export function App() {
       cancelled = true;
     };
   }, [selectedTx?.txid]);
+
+  // Click-timing attack mitigation (NEW-2): enforce 800ms cooldown on approval screen mount
+  useEffect(() => {
+    if (screen === 'approval' && pendingApproval) {
+      setApprovalCooldown(true);
+      const timer = setTimeout(() => {
+        setApprovalCooldown(false);
+      }, 800);
+      return () => clearTimeout(timer);
+    } else {
+      setApprovalCooldown(false);
+    }
+  }, [screen, pendingApproval?.id]);
 
   const checkInitialState = async () => {
     try {
@@ -1020,7 +1034,7 @@ export function App() {
   };
 
   const handleApprove = async () => {
-    if (!pendingApproval) return;
+    if (!pendingApproval || approvalCooldown) return;
     setBusy(true);
     let shouldClose = false;
     try {
@@ -2266,10 +2280,20 @@ export function App() {
               type="button"
               className="btn btn-primary"
               onClick={handleApprove}
-              disabled={busy}
-              style={{ flex: 1, height: 40, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+              disabled={busy || approvalCooldown}
+              style={{
+                flex: 1,
+                height: 40,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: (busy || approvalCooldown) ? 'not-allowed' : 'pointer',
+                opacity: approvalCooldown ? 0.6 : 1,
+                transition: 'opacity 0.2s ease',
+              }}
             >
-              {busy
+              {approvalCooldown
+                ? 'Securing…'
+                : busy
                 ? (pendingApproval.type === 'DAPP_BUY_GLYPH_L1' ? 'Buying…' : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' ? 'Depositing…' : 'Signing…')
                 : (pendingApproval.type === 'DAPP_BUY_GLYPH_L1' ? 'Confirm Purchase' : pendingApproval.type === 'DAPP_TRANSFER_GLYPH_L1' ? 'Confirm Escrow Deposit' : 'Approve & Sign')}
             </button>

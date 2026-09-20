@@ -11,7 +11,8 @@
     "test": "tsx src/shared/crypto/__tests__/crypto.test.ts && tsx src/shared/crypto/__tests__/txBuilder.test.ts && tsx scripts/test_security_patch.ts",
     "test:crypto": "tsx src/shared/crypto/__tests__/crypto.test.ts",
     "test:tx": "tsx src/shared/crypto/__tests__/txBuilder.test.ts",
-    "test:security": "tsx scripts/test_security_patch.ts"
+    "test:security": "tsx scripts/test_security_patch.ts",
+    "test:audit2": "tsx scripts/test_audit2_fix.ts"
   },
   "dependencies": {
     "@noble/hashes": "^1.7.1",
