@@ -12,7 +12,7 @@ Built with modern Manifest V3, React 18, Vite, and auditable cryptographic primi
 > **No build or Node.js required!** You can install Quavence Vault in less than 60 seconds.
 
 ### Method 1: Ready-to-use ZIP Package (Fastest & Recommended)
-1. Download **[`quavence-vault-extension-v0.1.0.zip`](./quavence-vault-extension-v0.1.0.zip)** (or from [GitHub Releases](https://github.com/quavence/quavence-vault/releases) / [quavence.com](https://quavence.com)).
+1. Download **[`quavence-vault-extension-v0.1.3.zip`](./quavence-vault-extension-v0.1.3.zip)** (or from [GitHub Releases](https://github.com/quavence/quavence-vault/releases) / [quavence.com](https://quavence.com)).
 2. Extract the `.zip` file into a local folder.
 3. In your browser (Chrome / Brave / Edge / Kiwi), navigate to: `chrome://extensions` (or `brave://extensions`).
 4. Enable the **Developer mode** toggle in the top-right corner.
@@ -81,7 +81,7 @@ Production assets are generated in the `./dist` folder.
 ```bash
 npm run package
 ```
-Generates `quavence-vault-extension-v0.1.0.zip` ready for Chromium distribution.
+Generates `quavence-vault-extension-v0.1.3.zip` ready for Chromium distribution.
 
 ---
 
@@ -139,6 +139,14 @@ if (window.quavence) {
   console.log('Purchase TxID:', buyResult.txid);
 }
 ```
+
+---
+
+## Release History
+
+- **v0.1.3**: Security remediation for NEW-2 (Approval Window Hijacking). Implemented strict FIFO approval queue, disabled in-place navigation of open prompt windows, added 800ms UI mount cooldown (`approvalCooldown`), background expiry timers with `.unref()`, and per-origin rate limiting.
+- **v0.1.2**: Security remediation for QV-2026-001. Origin privilege isolation gating all internal `VAULT_*` and `APPROVAL_*` message handlers behind trusted extension popup/sidepanel URLs.
+- **v0.1.0**: Initial release with native BIP-39/BIP-44 keychain, Carrier UTXO dust immunity, and dApp provider.
 
 ---
 
