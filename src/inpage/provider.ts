@@ -46,6 +46,7 @@ export interface QuavenceProvider {
     priceQvnc?: number;
     listingId?: number;
     carrierTxid?: string;
+    carrierVout?: number;
     name?: string;
     imageRef?: string;
     svgContent?: string;
@@ -62,6 +63,8 @@ export interface QuavenceProvider {
     sellerSat: number;
     feeRecipientAddress?: string;
     feeSat?: number;
+    marketplaceFeeSat?: number;
+    minerFeeSat?: number;
     feePercent?: number;
     name?: string;
     rarity?: string;
@@ -130,6 +133,7 @@ class QuavenceInpageProvider implements QuavenceProvider {
     priceQvnc?: number;
     listingId?: number;
     carrierTxid?: string;
+    carrierVout?: number;
     name?: string;
     imageRef?: string;
     svgContent?: string;

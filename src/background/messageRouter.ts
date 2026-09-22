@@ -326,7 +326,7 @@ export async function handleExtensionMessage(
           return { ok: false, error: 'Wallet is locked. Please unlock Quavence Vault.' };
         }
 
-        const { toAddress, glyphHash, edition, slotId, feeSat, dustSat, carrierTxid } = message.payload || {};
+        const { toAddress, glyphHash, edition, slotId, feeSat, dustSat, carrierTxid, carrierVout } = message.payload || {};
         if (!toAddress) {
           return { ok: false, error: 'toAddress is required for L1 glyph deposit.' };
         }
@@ -370,6 +370,7 @@ export async function handleExtensionMessage(
             edition: Number(edition || slotId || 0),
             opType: 0x03, // TRANSFER
             carrierTxid,
+            carrierVout: typeof carrierVout === 'number' ? carrierVout : undefined,
           },
           feeSat: feeSat || 10000,
           dustSat: dustSat || 10000,
@@ -420,7 +421,9 @@ export async function handleExtensionMessage(
           sellerAddress,
           sellerSat,
           feeRecipientAddress,
-          feeSat,
+          feeSat, // legacy marketplace fee
+          marketplaceFeeSat, // explicit marketplace platform fee
+          minerFeeSat, // explicit network miner fee
           feePercent,
           priceQvnc,
           name,
@@ -475,15 +478,20 @@ export async function handleExtensionMessage(
           { address: sellerAddress, amountSat: Math.round(sellerSat) },
         ];
 
-        if (feeRecipientAddress && feeSat && feeSat > 0) {
-          outputs.push({ address: feeRecipientAddress, amountSat: Math.round(feeSat) });
+        const platformCut = Math.round(marketplaceFeeSat ?? feeSat ?? 0);
+        if (feeRecipientAddress && platformCut > 0) {
+          outputs.push({ address: feeRecipientAddress, amountSat: platformCut });
         }
+
+        const effectiveMinerFeeSat = Number.isInteger(minerFeeSat) && minerFeeSat > 0
+          ? minerFeeSat
+          : 10000;
 
         // 4. Sign native payment transaction with carrier protection
         const payTx = await keyring.signTransaction({
           utxos,
           outputs,
-          feeSat: 10000,
+          feeSat: effectiveMinerFeeSat,
           excludeUtxos: carrierExcludeList,
         });
 

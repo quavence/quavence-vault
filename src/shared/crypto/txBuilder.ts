@@ -452,17 +452,30 @@ export async function buildAndSignGlyphTx(params: BuildGlyphTxParams): Promise<{
   let accumulatedSat = 0;
 
   const candidateUtxos = [...utxos];
-  if (glyphMeta.carrierTxid) {
+  const requiresCarrier = glyphMeta.opType === GLYPH_OP.TRANSFER || glyphMeta.opType === GLYPH_OP.BURN;
+
+  if (glyphMeta.carrierTxid || requiresCarrier) {
+    if (!glyphMeta.carrierTxid) {
+      throw new Error(
+        `Carrier UTXO txid is strictly required for glyph ${glyphMeta.opType === GLYPH_OP.BURN ? 'BURN' : 'TRANSFER'}`
+      );
+    }
+
     const carrierIdx = candidateUtxos.findIndex((u) => {
       const matchTx = u.txid === glyphMeta.carrierTxid;
       const matchVout = glyphMeta.carrierVout === undefined || u.vout_index === glyphMeta.carrierVout;
       return matchTx && matchVout;
     });
-    if (carrierIdx !== -1) {
-      const [carrier] = candidateUtxos.splice(carrierIdx, 1);
-      selectedInputs.push(carrier);
-      accumulatedSat += carrier.amount;
+
+    if (carrierIdx === -1) {
+      throw new Error(
+        `Carrier UTXO ${glyphMeta.carrierTxid}:${glyphMeta.carrierVout ?? 0} not found in spendable wallet UTXOs. Cannot build valid lineage-preserving transaction.`
+      );
     }
+
+    const [carrier] = candidateUtxos.splice(carrierIdx, 1);
+    selectedInputs.push(carrier);
+    accumulatedSat += carrier.amount;
   }
 
   // Gather additional funds for miner fee while strictly preserving any OTHER carrier UTXOs
