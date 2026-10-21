@@ -3,11 +3,9 @@ node_modules/
 .pnp
 .pnp.js
 
-# Production build artifacts (dist tracked for zero-build direct loading)
-# dist/
+# Production build artifacts
 *.zip
-!quavence-vault-extension-*.zip
-!*.sha256
+*.sha256
 
 # Environment variables & secrets
 .env

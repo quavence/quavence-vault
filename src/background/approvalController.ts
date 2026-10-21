@@ -1,6 +1,6 @@
 /**
  * Approval Controller: manages user confirmation prompts for dApp interactions
- * Hardened against approval window hijacking (NEW-2 / Audit 2):
+ * Hardened against approval window hijacking:
  * 1. Strict FIFO queue: never navigates an open approval window to a different request.
  * 2. Active expiration timer: automatically rejects expired requests.
  * 3. Origin rate-limiting: caps pending requests and request frequency per origin.

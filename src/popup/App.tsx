@@ -689,22 +689,6 @@ export function App() {
 
       const hasVaultRes = await chrome.runtime.sendMessage({ type: 'VAULT_HAS_VAULT' });
       if (!hasVaultRes?.data) {
-        // Restore active onboarding draft from chrome.storage.session (survives popup blur/close)
-        try {
-          const draft = await chrome.storage.session.get([
-            'qvnc_draft_step',
-            'qvnc_draft_mnemonic',
-            'qvnc_draft_pwd',
-            'qvnc_draft_pwd_confirm',
-          ]);
-          if (draft?.qvnc_draft_step && draft?.qvnc_draft_mnemonic) {
-            setMnemonicDraft(draft.qvnc_draft_mnemonic);
-            if (draft.qvnc_draft_pwd) setPasswordInput(draft.qvnc_draft_pwd);
-            if (draft.qvnc_draft_pwd_confirm) setConfirmPasswordInput(draft.qvnc_draft_pwd_confirm);
-            setScreen(draft.qvnc_draft_step);
-            return;
-          }
-        } catch {}
         setScreen('welcome');
         return;
       }
@@ -923,12 +907,6 @@ export function App() {
   const handleStartCreate = async () => {
     const phrase = generateMnemonic(12);
     setMnemonicDraft(phrase);
-    try {
-      await chrome.storage.session.set({
-        qvnc_draft_mnemonic: phrase,
-        qvnc_draft_step: 'create_seed',
-      });
-    } catch {}
     setScreen('create_seed');
   };
 
@@ -952,14 +930,6 @@ export function App() {
       });
 
       if (res?.ok) {
-        try {
-          await chrome.storage.session.remove([
-            'qvnc_draft_step',
-            'qvnc_draft_mnemonic',
-            'qvnc_draft_pwd',
-            'qvnc_draft_pwd_confirm',
-          ]);
-        } catch {}
         setAddress(res.data.address);
         fetchBalance(res.data.address);
         fetchGlyphs(res.data.address);
@@ -1545,10 +1515,7 @@ export function App() {
           <div className="btn-group" style={{ marginTop: 'auto' }}>
             <button
               className="btn btn-primary"
-              onClick={async () => {
-                try {
-                  await chrome.storage.session.set({ qvnc_draft_step: 'set_password' });
-                } catch {}
+              onClick={() => {
                 setScreen('set_password');
               }}
             >
@@ -1622,9 +1589,7 @@ export function App() {
                   placeholder="At least 8 characters"
                   value={passwordInput}
                   onChange={(e) => {
-                    const val = e.target.value;
-                    setPasswordInput(val);
-                    chrome.storage.session?.set?.({ qvnc_draft_pwd: val });
+                    setPasswordInput(e.target.value);
                   }}
                   style={{ paddingLeft: 38, paddingRight: 38 }}
                 />
@@ -1651,9 +1616,7 @@ export function App() {
                   placeholder="Repeat your password"
                   value={confirmPasswordInput}
                   onChange={(e) => {
-                    const val = e.target.value;
-                    setConfirmPasswordInput(val);
-                    chrome.storage.session?.set?.({ qvnc_draft_pwd_confirm: val });
+                    setConfirmPasswordInput(e.target.value);
                   }}
                   style={{ paddingLeft: 38, paddingRight: 38 }}
                 />
